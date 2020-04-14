@@ -1,0 +1,89 @@
+---
+title: "Initial R01 dataset and subsetting"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r pressure, echo=FALSE}
+library(knitr)
+opts_knit$set(root.dir = 'C:/Users/David Vu/Documents/Work/Manuscripts/2019-DENV-Pf/DENV-malaria-R-files')
+#Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```
+#This code was rebuilt based on ARK's GitHub code
+```{r}
+# packages -----------------------------------------------------------------
+library(tidyr)
+library(zoo)
+library(lubridate)
+library(utils)
+```
+#Download data from REDCap
+```{r}
+setwd("/Users/David Vu/Documents/Work/Manuscripts/2019-DENV-Pf/DENV-malaria-R-files") #need to run on console
+#library(redcapAPI)
+#library(REDCapR)
+#Redcap.token <- readLines("C:/Users/David Vu/Documents/Work/REDCap Data/LaBeaud R01/RedCapToken.txt") # Read API token from folder
+#REDcap.URL  <- 'https://redcap.stanford.edu/api/'
+#rcon <- redcapConnection(url=REDcap.URL, token=Redcap.token)
+
+#export data from redcap to R (must be connected via cisco VPN)
+#R01_lab_results <- redcap_read(redcap_uri  = REDcap.URL, token= Redcap.token, batch_size = 300, continue_on_error = TRUE) #had technical problems downloading in chunks
+
+#R01<-redcap_read_oneshot(redcap_uri= REDcap.URL, token=Redcap.token, raw_or_label = "raw", raw_or_label_headers = "raw", guess_type = FALSE, guess_max = 1000L, verbose = TRUE, config_options = NULL)$data #This worked
+library(readr)
+R01 <- read_csv("C:/Users/David Vu/Documents/Work/Manuscripts/2019-DENV-Pf/DENV-malaria-R-files/200407-R01.csv")
+#load("2020-04-10_R01.rda") #most recent working file, 84922 obs 1597 variables
+#R01backup<-R01
+
+#currentDate <- Sys.Date() 
+#FileName <- paste(Sys.Date(),"R01.rda", sep="_") 
+#save(R01, file=FileName)
+#write.csv(as.data.frame(R01), "200407-R01.csv", na="", row.names = F )
+```
+#AIC subset
+```{r}
+#subset AIC based on second character of person_id=="F"
+table(substr(R01$person_id, 2, 2), exclude = NULL)#C:31069 F:50702 M:46 
+#"M" due to person_ids "DMxxxx" from DIS study. These should correspond to existing AIC person_ids. Exclude from analysis.
+#Need to merge data for these person_ids with original AIC
+#Subset based on second character of person_id==F
+AIC<-R01[which(substr(R01$person_id, 2, 2)=="F"),] #has 50800 obs
+save(AIC, file=paste(Sys.Date(),"AIC.rda", sep="_"))
+#-------------------------------
+#Exclude visits not applicable to this analysis
+AIC<- AIC[which(AIC$redcap_event_name!="visit_a2_arm_1"&AIC$redcap_event_name!="visit_b2_arm_1"&AIC$redcap_event_name!="visit_c2_arm_1"&AIC$redcap_event_name!="visit_d2_arm_1"&AIC$redcap_event_name!="visit_c2_arm_1"&AIC$redcap_event_name!="visit_u24_arm_1"&AIC$redcap_event_name!="visit_u24_fu_arm_1"), ]
+#-------------------------------
+#Number of assigned person_id = screened participants
+library(dplyr) 
+n_distinct(AIC$person_id) #8014 screened
+#Number of enrolled = those with redcap_event_name=="patient_informatio_arm_1"
+table(AIC$redcap_event_name, exclude = NULL)#7545 enrolled
+```
+#Additional variables: id_site (C,K,R,M,U), id_region (C,W), rural (1,0)
+```{r}
+#Define sites, city, rural ------------------------------------------------------
+table(AIC$site, exclude = NULL) #site variable does not provide actual study site
+#create id_site variable with the actual site from the first letter of person_id
+AIC$id_site<-substr(AIC$person_id, 1, 1)
+table(AIC$id_site, exclude = NULL)
+#create id_region to distinguish coast and west
+AIC$id_region<-NA
+AIC <- within(AIC, id_region[AIC$id_site=="M"] <- "C") #Msambweni
+AIC <- within(AIC, id_region[AIC$id_site=="U"] <- "C") #Ukunda
+AIC <- within(AIC, id_region[AIC$id_site=="K"] <- "W") #Kisumu
+AIC <- within(AIC, id_region[AIC$id_site=="C"] <- "W") #Chulaimbo
+AIC <- within(AIC, id_region[AIC$id_site=="R"] <- "W") #Mbaka Oromo
+table(AIC$id_site, AIC$id_region, exclude = NULL)
+##rural
+AIC$rural<-NA
+AIC <- within(AIC, rural[AIC$id_site=="C"] <- 1)
+AIC <- within(AIC, rural[AIC$id_site=="R"] <- 1)
+AIC <- within(AIC, rural[AIC$id_site=="M"] <- 1)
+AIC <- within(AIC, rural[AIC$id_site=="K"] <- 0)
+AIC <- within(AIC, rural[AIC$id_site=="U"] <- 0)
+table(AIC$id_site, AIC$rural, exclude = NULL)
+save(AIC, file=paste(Sys.Date(),"AIC.rda", sep="_"))
+load("2020-04-14_AIC.rda")
+```
