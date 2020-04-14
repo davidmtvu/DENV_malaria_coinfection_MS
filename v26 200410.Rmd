@@ -1,22 +1,27 @@
 ---
-title: "200410 MS redo"
+title: "Initial R01 dataset and subsetting"
 output: html_document
 ---
-#This code was rebuilt using Amy's GitHub code
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
 
+```{r pressure, echo=FALSE}
+library(knitr)
+opts_knit$set(root.dir = 'C:/Users/David Vu/Documents/Work/Manuscripts/2019-DENV-Pf/DENV-malaria-R-files')
+#Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```
+#This code was rebuilt based on ARK's GitHub code
 ```{r}
 # packages -----------------------------------------------------------------
 library(tidyr)
-
 library(zoo)
-library(beepr)
 library(lubridate)
 library(utils)
 ```
-
 #Download data from REDCap
 ```{r}
-setwd("C:/Users/David Vu/Documents/Work/REDCap Data/LaBeaud R01")
+setwd("/Users/David Vu/Documents/Work/Manuscripts/2019-DENV-Pf/DENV-malaria-R-files") #need to run on console
 #library(redcapAPI)
 #library(REDCapR)
 #Redcap.token <- readLines("C:/Users/David Vu/Documents/Work/REDCap Data/LaBeaud R01/RedCapToken.txt") # Read API token from folder
@@ -24,29 +29,32 @@ setwd("C:/Users/David Vu/Documents/Work/REDCap Data/LaBeaud R01")
 #rcon <- redcapConnection(url=REDcap.URL, token=Redcap.token)
 
 #export data from redcap to R (must be connected via cisco VPN)
-#R01_lab_results <- redcap_read(redcap_uri  = REDcap.URL, token= Redcap.token, batch_size = 300, continue_on_error = TRUE)
+#R01_lab_results <- redcap_read(redcap_uri  = REDcap.URL, token= Redcap.token, batch_size = 300, continue_on_error = TRUE) #had technical problems downloading in chunks
 
-#R01<-redcap_read_oneshot(redcap_uri= REDcap.URL, token=Redcap.token, raw_or_label = "raw", raw_or_label_headers = "raw", guess_type = FALSE, guess_max = 1000L, verbose = TRUE, config_options = NULL)$data
-load("2020-04-07_R01.rda") #most recent working file, 84922 obs 1597 variables
-R01backup<-R01
+#R01<-redcap_read_oneshot(redcap_uri= REDcap.URL, token=Redcap.token, raw_or_label = "raw", raw_or_label_headers = "raw", guess_type = FALSE, guess_max = 1000L, verbose = TRUE, config_options = NULL)$data #This worked
+library(readr)
+R01 <- read_csv("C:/Users/David Vu/Documents/Work/Manuscripts/2019-DENV-Pf/DENV-malaria-R-files/200407-R01.csv")
+#load("2020-04-10_R01.rda") #most recent working file, 84922 obs 1597 variables
+#R01backup<-R01
 
-currentDate <- Sys.Date() 
-FileName <- paste(currentDate,"R01.rda", sep="_") 
-save(R01, file=FileName)
+#currentDate <- Sys.Date() 
+#FileName <- paste(Sys.Date(),"R01.rda", sep="_") 
+#save(R01, file=FileName)
 #write.csv(as.data.frame(R01), "200407-R01.csv", na="", row.names = F )
 ```
-#Enrollment
+#AIC subset
 ```{r}
-#Exclude visits not applicable to this analysis
-R01<- R01[which(R01$redcap_event_name!="visit_a2_arm_1"&R01$redcap_event_name!="visit_b2_arm_1"&R01$redcap_event_name!="visit_c2_arm_1"&R01$redcap_event_name!="visit_d2_arm_1"&R01$redcap_event_name!="visit_c2_arm_1"&R01$redcap_event_name!="visit_u24_arm_1"&R01$redcap_event_name!="visit_u24_fu_arm_1"), ] #removed 3105 obs
-#---------------------------------------------------
 #subset AIC based on second character of person_id=="F"
 table(substr(R01$person_id, 2, 2), exclude = NULL)#C:31069 F:50702 M:46 
 #"M" due to person_ids "DMxxxx" from DIS study. These should correspond to existing AIC person_ids. Exclude from analysis.
 #Need to merge data for these person_ids with original AIC
 #Subset based on second character of person_id==F
-AIC<-R01[which(substr(R01$person_id, 2, 2)=="F"),] #has 50702 obs
-save(AIC, file=paste(currentDate,"AIC.rda", sep="_"))
+AIC<-R01[which(substr(R01$person_id, 2, 2)=="F"),] #has 50800 obs
+save(AIC, file=paste(Sys.Date(),"AIC.rda", sep="_"))
+#-------------------------------
+#Exclude visits not applicable to this analysis
+AIC<- AIC[which(AIC$redcap_event_name!="visit_a2_arm_1"&AIC$redcap_event_name!="visit_b2_arm_1"&AIC$redcap_event_name!="visit_c2_arm_1"&AIC$redcap_event_name!="visit_d2_arm_1"&AIC$redcap_event_name!="visit_c2_arm_1"&AIC$redcap_event_name!="visit_u24_arm_1"&AIC$redcap_event_name!="visit_u24_fu_arm_1"), ]
+#-------------------------------
 #Number of assigned person_id = screened participants
 library(dplyr) 
 n_distinct(AIC$person_id) #8014 screened
