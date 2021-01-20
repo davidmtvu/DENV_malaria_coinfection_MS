@@ -1,0 +1,854 @@
+---
+title: "DENV malaria MS step 2 data cleaning"
+author: "David M. Vu"
+date: "11/06/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+##This is the second code file for the DENV/malaria MS. The first is called "DENVmal-step1-clean_sym_pe_dates.Rmd" with data in "2020-09-30_dob_age.rda"
+```{r}
+setwd("Users/david/Documents/Work/GitHub/DENV_malaria_coinfection_MS") #need to run on console
+#library(redcapAPI)
+#library(REDCapR)
+#Redcap.token <- readLines("C:/Users/David Vu/Documents/Work/REDCap Data/LaBeaud R01/RedCapToken.txt") # Read API token from folder
+#REDcap.URL  <- 'https://redcap.stanford.edu/api/'
+#rcon <- redcapConnection(url=REDcap.URL, token=Redcap.token)
+
+#export data from redcap to R (must be connected via cisco VPN)
+#R01_lab_results <- redcap_read(redcap_uri  = REDcap.URL, token= Redcap.token, batch_size = 300, continue_on_error = TRUE) #had technical problems downloading in chunks
+
+#R01<-redcap_read_oneshot(redcap_uri= REDcap.URL, token=Redcap.token, raw_or_label = "raw", raw_or_label_headers = "raw", guess_type = FALSE, guess_max = 1000L, verbose = TRUE, config_options = NULL)$data #This worked
+save(R01, file=paste(Sys.Date(),"R01.rda", sep="_"))
+load("C:/Users/David Vu/My Cloud/TurtleCloudSync/Work/Manuscripts/2019-DENV-Pf/DENV-malaria-R-files/2020-04-10_R01.rda") #most recent working file, 84922 obs 1597 variables
+#write.csv(as.data.frame(R01), "200407-R01.csv", na="", row.names = F )
+R01back<-R01
+```
+
+#Weight and height
+```{r}
+df<-dfback
+grep("weight", names(df), value=TRUE) #"child_weight_aic", "child_weight", "u24_weight"   
+grep("height", names(df), value=TRUE) #"child_height_aic"            "child_height", "u24_height_measurement___0", "u24_height_measurement___1", "u24_height_measurement___98", "u24_height_measurement___99", "u24_height", "u24_height_stad", "u24_height_mt"
+table(df$child_weight, exclude = NULL) #all NA
+table(df$u24_weight, exclude = NULL) #all NA
+table(df$child_height, exclude = NULL) #all NA
+table(df$u24_height_measurement___0, exclude = NULL) #all NA
+table(df$u24_height_measurement___1, exclude = NULL) #all NA
+table(df$u24_height, exclude = NULL) #all NA
+table(df$u24_height_stad, exclude = NULL) #all NA
+table(df$u24_height_mt, exclude = NULL) #all NA
+
+class(df$child_weight_aic)
+df$child_weight_aic <-
+  as.numeric(df$child_weight_aic)
+qplot(df$child_weight_aic, geom = "histogram")
+summary(df$child_weight_aic)
+ggplot(df, aes(x=age_days, y=child_weight_aic)) + geom_point()
+#looking at highest and lowest values, there seems to be some errors
+#For example MF1049 vA weight recorded as 8 kg but vB recorded as 18 kg which is more consistent with subsequent weight measurements
+#creating new variables to house corrected data
+df$cweight<-as.numeric(df$child_weight_aic)
+df$cheight<-as.numeric(df$child_height_aic)
+#First replace all 0 or 999 with NA
+df$cweight[df$cweight==999]<-NA
+df$cheight[df$cheight==999]<-NA
+df$cheight[df$cheight==0]<-NA
+ggplot(df, aes(x=age_days, y=cweight)) + geom_point()
+ggplot(df, aes(x=age_days, y=cheight)) + geom_point()
+#Use WHO anthro package to calculate bmi and validate based first on those values
+WHOz<-df[c("person_id", "redcap", "gender_aic", "age_days", "child_weight_aic", "child_height_aic")]
+#looking at highest and lowest values, there seems to be some errors
+#For example MF1049 vA weight recorded as 8 kg but vB recorded as 18 kg which is more consistent with subsequent weight measurements
+#creating new variables to house corrected data
+WHOz$cweight<-as.numeric(WHOz$child_weight_aic)
+WHOz$cheight<-as.numeric(WHOz$child_height_aic)
+#First replace all 0 or 999 with NA
+WHOz$cweight[WHOz$cweight==999]<-NA
+WHOz$cheight[WHOz$cheight==999]<-NA
+WHOz$cheight[WHOz$cheight==0]<-NA
+
+library(anthro) #WHO anthropometrics R package v0.9.3 (May 21, 2020)
+#for up to 5 yo
+#gender_aic 0=male 1=female, need to convert to WHO code sex parameters require 1=male, 2=female
+WHOz$sex<-NA
+WHOz$sex[WHOz$gender_aic==0]<-1
+WHOz$sex[WHOz$gender_aic==1]<-2
+table(WHOz$gender_aic, WHOz$sex, exclude = NULL)
+WHOtable<-with(
+  WHOz,
+  anthro_zscores(
+    sex = sex, age = as.numeric(age_days),
+    weight = cweight, lenhei = cheight
+  )
+)
+WHOmerge<-cbind(WHOz, WHOtable)
+summary(WHOmerge$cbmi)
+#BMI less than 12 usually considered incompatible with life
+oor_id<-WHOmerge$person_id[WHOmerge$cbmi<11|WHOmerge$cbmi>30]
+oor_subset<-WHOmerge[WHOmerge$person_id %in% oor_id,]
+length(unique(oor_subset$person_id))#377
+save(oor_subset, file = paste(Sys.Date(), "BMI_oor_subset.rda", sep = "_"))
+write.csv(oor_subset, file = paste(Sys.Date(), "BMI_oor_subset.csv", sep = "_"))
+```
+
+
+
+
+
+#Correcting data that are out of range
+#----------------------11/30/20 stop
+```{r}
+#oor_subset
+#CF0002 values ok, no change 
+#CF0039 vA values missing, use vB values instead
+df$cweight[df$person_id=="CF0039"&df$redcap=="a"]<-12.4
+df$cheight[df$person_id=="CF0039"&df$redcap=="a"]<-102
+#CF0041 height 131 which is >3z away from WHO median for 4 yo boy, probably mis-entered 113
+WHOz$cheight[WHOz$person_id=="CF0041"&WHOz$redcap=="a"]<-113
+#CF0072 vA height 144, vB height 114; use vB height
+WHOz$cheight[WHOz$person_id=="CF0072"&WHOz$redcap=="a"]<-114
+#CF0117 vC and vD heights greater than vE and vF, which are more reasonable
+WHOz$cheight[WHOz$person_id=="CF0117"&WHOz$redcap=="c"]<-112
+WHOz$cheight[WHOz$person_id=="CF0117"&WHOz$redcap=="d"]<-112
+#CF0123 vA and vB heights differ by 6 cm; unable to change
+#CF0129 vB weight inconsistent with others
+WHOz$cweight[WHOz$person_id=="CF0129"&WHOz$redcap=="b"]<-20
+#CF0151 vA height 113, vB 144, likely 114 
+WHOz$cheight[WHOz$person_id=="CF0151"&WHOz$redcap=="b"]<-114
+#CF0222 vA height 150 cm vB 115 cm
+#CF0222 vA height 150, vB 115, likely 150 (15 yo girl)
+df$cheight[df$person_id=="CF0222"&df$redcap=="b"]<-150
+#CF0260 vA height=150, vb height=123; change vA height to 115
+WHOz$cheight[WHOz$person_id=="CF0260"&WHOz$redcap=="a"]<-115
+#CF0307 vA weight 175 kg, probably misentered, change to 17.5
+WHOz$cweight[WHOz$person_id=="CF0307"&WHOz$redcap=="a"]<-17.5
+#CF0354 vA height greater than vB, unable to change
+#CF0436 vD height 24cm higher than vB, but only 57 days apart; change vD height to NA
+WHOz$cheight[WHOz$person_id=="CF0436"&WHOz$redcap=="d"]<-NA
+#CF0449 vA values missing, use vB
+WHOz$cweight[WHOz$person_id=="CF0449"&WHOz$redcap=="a"]<-15
+WHOz$cheight[WHOz$person_id=="CF0449"&WHOz$redcap=="a"]<-126
+
+#KF0020 BMI 7, incompatible with life, weight 16.9kg unlikely
+WHOz$cweight[WHOz$person_id=="KF0020"&WHOz$redcap=="a"]<-NA
+#KF0139 vA and vB weight differ by 4.4 kg, unlikely but unable to change
+#KF0202 vA weight 91 for 2.7 yo, use NA
+WHOz$cweight[WHOz$person_id=="KF0202"&WHOz$redcap=="a"]<-NA
+#KF0535 height 10.5 cm, likely 105 mis-entered
+WHOz$cheight[WHOz$person_id=="KF0535"&WHOz$redcap=="a"]<-105
+#KF0820 height 37 cm, not possible, replace with NA
+WHOz$cheight[WHOz$person_id=="KF0820"&WHOz$redcap=="a"]<-NA
+#KF1168 vB height 67.5 (outside of WHO ranges), less than vA height 79 (within WHO ranges), use vA height
+WHOz$cheight[WHOz$person_id=="KF1168"&WHOz$redcap=="b"]<-79
+#KF1289 vB height 67 (out of range), vA height 86.5, use vA height
+WHOz$cheight[WHOz$person_id=="KF1289"&WHOz$redcap=="b"]<-86.5
+#KF1555 vA weight 70 kg for 1.5 yo, use vB weight of 11 kg
+WHOz$cweight[WHOz$person_id=="KF1555"&WHOz$redcap=="a"]<-11
+
+
+
+
+#MF0123 values for two visits consistent despite high BMI, no change
+#MF0243 height 33.5, impossible
+WHOz$cheight[WHOz$person_id=="MF0243"&WHOz$redcap=="a"]<-NA
+#MF0384 vB weight 35.5, but vA, C, D are 20, 22.6, 22.6, use vA; also vC height 23.4, impossible, use vD
+WHOz$cweight[WHOz$person_id=="MF0384"&WHOz$redcap=="b"]<-20
+WHOz$cheight[WHOz$person_id=="MF0384"&WHOz$redcap=="c"]<-120
+#MF0492 vA weight 5 kg, height 38 cm for 10 yo, impossible, use vB
+WHOz$cweight[WHOz$person_id=="MF0492"&WHOz$redcap=="a"]<-26.8
+WHOz$cheight[WHOz$person_id=="MF0492"&WHOz$redcap=="a"]<-121.6
+#MF0510 vA weight 38.3 kg, unlikely for 1.8 yo, replace with NA
+WHOz$cweight[WHOz$person_id=="MF0510"&WHOz$redcap=="a"]<-NA
+#MF0579 height 38 cm, not possible
+WHOz$cheight[WHOz$person_id=="MF0579"&WHOz$redcap=="a"]<-NA
+#MF0620 vA height 60, less than -3z while vB height 88, >+3z; weight between 1-2z above median so 60 cm is less consistent, use vB
+WHOz$cheight[WHOz$person_id=="MF0620"&WHOz$redcap=="a"]<-88
+#MF0671 vB height 25cm, impossible. Use vA 113 cm
+WHOz$cheight[WHOz$person_id=="MF0671"&WHOz$redcap=="b"]<-113
+#MF0696 vD weight 49 kg while vC 14.9; use vC
+WHOz$cweight[WHOz$person_id=="MF0696"&WHOz$redcap=="d"]<-14.9
+#MF0749 vA height 124, vB height 170.5, 18 yo, use vB height
+WHOz$cheight[WHOz$person_id=="MF0749"&WHOz$redcap=="a"]<-170.5
+#MF0956 vA weight 87 = height, use vB weight
+WHOz$cweight[WHOz$person_id=="MF0956"&WHOz$redcap=="a"]<-13
+#MF0967 height 63 cm not possible
+WHOz$cheight[WHOz$person_id=="MF0967"&WHOz$redcap=="a"]<-NA
+#MF1049 4 yo weight and height listed as 8, use vB data instead
+WHOz$cweight[WHOz$person_id=="MF1049"&WHOz$redcap=="a"]<-18
+WHOz$cheight[WHOz$person_id=="MF1049"&WHOz$redcap=="a"]<-117
+#MF1050 10 yo weight/height=5, use vB data instead
+WHOz$cweight[WHOz$person_id=="MF1050"&WHOz$redcap=="a"]<-20
+WHOz$cheight[WHOz$person_id=="MF1050"&WHOz$redcap=="a"]<-119
+#MF1058 weight for 2.3 listed as 94kg, likely 9.4 kg
+WHOz$cweight[WHOz$person_id=="MF1058"&WHOz$redcap=="a"]<-9.4
+#MF1059 weight less than 1SD from median but height over 3SD lower than median? 
+WHOz$cheight[WHOz$person_id=="MF1059"&WHOz$redcap=="a"]<-NA
+#MF1172 height=5cm impossible
+WHOz$cheight[WHOz$person_id=="MF1172"&WHOz$redcap=="a"]<-NA
+#MF1572 vB weight 46.2 for 1.6 yo, use vA weight
+WHOz$cweight[WHOz$person_id=="MF1572"&WHOz$redcap=="b"]<-11.3
+#MF2076 vA weight 47.8 for 6.5 yo, vB 18, use vB
+WHOz$cweight[WHOz$person_id=="MF2076"&WHOz$redcap=="a"]<-18
+#RF0405 vA weight 121 kg, height 138 greater than 121 at vB, use vB
+WHOz$cweight[WHOz$person_id=="RF0405"&WHOz$redcap=="a"]<-27
+WHOz$cheight[WHOz$person_id=="RF0405"&WHOz$redcap=="a"]<-121
+#UF0232 17 yo only 120 cm?, unlikely unable to change
+#UF0548 vA height 120, vB 12, mis entered
+WHOz$cheight[WHOz$person_id=="UF0548"&WHOz$redcap=="b"]<-120
+#UF1975 vA heigt 150, vB 113 (<3z); use vA
+WHOz$cheight[WHOz$person_id=="UF1975"&WHOz$redcap=="b"]<-150
+#UF2157 vB weight 101kg, likely 10.1
+WHOz$cweight[WHOz$person_id=="UF2157"&WHOz$redcap=="b"]<-10.1
+
+#Now look at BMI <11
+oor_idlo<-WHOz$person_id[WHOz$BMI<11]
+oor_lo<-WHOz[WHOz$person_id %in% oor_idlo,]
+length(unique(oor_lo$person_id))#143
+table(oor_lo$person_id)
+
+
+
+#KF0517 height 168cm for 6.7 yo unlikely, replace with NA
+WHOz$cheight[WHOz$person_id=="KF0517"&WHOz$redcap=="a"]<-NA
+#KF0531 low BMI, weight, unable to change
+#KF0540 vB weight 3.5 kg less than vA, unable to change
+#KF0581 vA values low, unable to change
+#KF0647 vA height high but unable to change
+#KF0648
+#KF0695
+#KF0705 
+#KF0950
+#KF1075
+#KF1154
+#KF1187
+#KF1241
+#KF1245 
+#KF1274
+#KF1284
+#KF1335
+#KF1352 
+KF1426 KF1437 KF1450 KF1491 KF1525 KF1625 KF1696 KF1736 MF0024 MF0117 
+MF0119 MF0143 MF0165 MF0357 MF0380 MF0385 MF0410 MF0441 MF0450 MF0456 
+MF0563 MF0564 MF0614 MF0627 MF0646 MF0673 MF0800 MF0801 MF0802 MF0831 
+     9      9      9      9      9      9      9      9      9      9 
+MF0837 MF0842 MF0848 MF0989 MF1009 MF1055 MF1056 MF1263 MF1306 MF1449 
+     9      9      9      9      9      9      9      9      9      7 
+MF1469 MF1487 MF1499 MF1520 MF1523 MF1533 MF1535 MF1537 MF1556 MF1588 
+     7      7      7      7      7      7      7      7      7      7 
+MF1590 MF1654 MF1661 MF1663 MF1664 MF1796 MF2023 MF2225 UF0112 UF0142 
+     7      7      7      7      7      5      2      3      8      8 
+UF0157 UF0171 UF0225 UF0277 UF0447 UF0490 UF0492 UF0512 UF0526 UF0656 
+     8      8      8      8      8      8      8      8      8      7 
+UF0688 UF0699 UF0806 UF0932 UF0944 UF0967 UF1089 UF1097 UF1130 UF1265 
+     7      7      7      7      7      7      7      7      7      7 
+UF1320 UF1391 UF1421 UF1431 UF1459 UF1474 UF1537 UF1551 UF1565 UF1599 
+     7      7      7      7      7      7      7      7      7      7 
+UF1661 UF1694 UF1789 UF1816 UF1822 UF1828 UF1830 UF1884 UF1904 UF1909 
+     7      5      5      5      5      5      5      5      5      5 
+UF1917 UF1947 UF2039 UF2048 UF2071 UF2110 UF2147 UF2161 UF2199 UF2203 
+     5      5      4      4      4      4      3      3      5      3 
+UF2215 UF2330 UF2380 
+     3      3      3 
+
+
+
+oor_id<-WHOz$person_id[WHOz$BMI<12|WHOz$BMI>30]
+oor_subset<-WHOz[WHOz$person_id %in% oor_id,]
+length(unique(oor_subset$person_id))#111
+mean(WHOz$BMI, na.rm = TRUE) #16.5
+sd(WHOz$BMI, na.rm = TRUE)#62.5
+
+
+
+
+
+#KF0581
+#KF0632
+#KF0647
+#KF0648
+#KF0695
+#KF0705
+#KF0813
+#KF0820
+#KF0855
+#KF0950
+#KF1032
+#KF1075
+#KF1154
+#KF1164 
+#KF1168
+#KF1187
+#KF1234
+#KF1241
+#KF1245
+#KF1274
+#KF1284
+#KF1288
+#KF1289
+#KF1335
+#KF1352
+#KF1360
+#KF1367
+#KF1421 
+
+KF1426 KF1437 KF1450 KF1467 KF1478 KF1491 KF1498 KF1525 KF1534 KF1553 KF1555 KF1566 KF1625 KF1635 
+
+KF1656 KF1691 KF1696 KF1700 KF1736 MF0024 MF0025 MF0074 MF0081 MF0082 MF0117 MF0119 MF0123 MF0138 
+
+MF0143 MF0144 MF0152 MF0155 MF0157 MF0165 MF0243 MF0334 MF0357 MF0361 MF0380 MF0384 MF0385 MF0401 
+ 
+MF0410 MF0424 MF0441 MF0450 MF0456 MF0492 MF0495 MF0505 MF0507 MF0510 MF0541 MF0563 MF0564 MF0571 
+
+MF0572 MF0579 MF0612 MF0614 MF0620 MF0627 MF0646 MF0650 MF0671 MF0673 MF0696 MF0744 MF0745 MF0749 
+
+MF0758 MF0760 MF0763 MF0765 MF0798 MF0800 MF0801 MF0802 MF0831 MF0833 MF0837 MF0842 MF0848 MF0887 
+ 
+MF0931 MF0956 MF0967 MF0989 MF1009 MF1049 MF1050 MF1055 MF1056 MF1058 MF1059 MF1071 MF1079 MF1136 
+
+MF1172 MF1195 MF1263 MF1306 MF1319 MF1325 MF1427 MF1445 MF1449 MF1451 MF1454 MF1465 MF1469 MF1478 
+
+MF1481 MF1487 MF1499 MF1520 MF1523 MF1532 MF1533 MF1535 MF1537 MF1538 MF1546 MF1556 MF1572 MF1578 
+
+MF1583 MF1588 MF1590 MF1611 MF1654 MF1659 MF1660 MF1661 MF1663 MF1664 MF1665 MF1669 MF1670 MF1780 
+
+MF1787 MF1796 MF1827 MF1868 MF1878 MF1888 MF1997 MF2023 MF2076 MF2153 MF2154 MF2194 MF2196 MF2225 
+
+MF2325 MF2390 RF0405 RF0602 RF0665 RF0709 RF0843 RF0846 UF0007 UF0097 UF0112 UF0142 UF0145 UF0157 
+
+UF0171 UF0201 UF0225 UF0232 UF0265 UF0277 UF0366 UF0447 UF0490 UF0492 UF0500 UF0512 UF0520 UF0526 
+ 
+UF0527 UF0548 UF0602 UF0608 UF0620 UF0656 UF0671 UF0688 UF0699 UF0751 UF0774 UF0783 UF0788 UF0790 
+
+UF0791 UF0806 UF0812 UF0815 UF0887 UF0918 UF0932 UF0933 UF0944 UF0967 UF1004 UF1008 UF1024 UF1049 
+
+UF1089 UF1091 UF1097 UF1108 UF1120 UF1125 UF1130 UF1134 UF1135 UF1136 UF1159 UF1185 UF1199 UF1211 
+
+UF1220 UF1265 UF1320 UF1352 UF1373 UF1390 UF1391 UF1395 UF1421 UF1431 UF1438 UF1457 UF1458 UF1459 
+
+UF1472 UF1474 UF1489 UF1492 UF1493 UF1515 UF1537 UF1551 UF1565 UF1587 UF1588 UF1589 UF1590 UF1599 
+
+UF1630 UF1659 UF1661 UF1669 UF1694 UF1701 UF1726 UF1786 UF1789 UF1813 UF1814 UF1816 UF1822 UF1828 
+
+UF1830 UF1884 UF1887 UF1904 UF1909 UF1917 UF1924 UF1927 UF1944 UF1947 UF1975 UF2019 UF2039 UF2048 
+UF2055 UF2070 UF2071 UF2089 UF2110 UF2115 UF2147 UF2157 UF2161 UF2199 UF2203 UF2215 UF2273 UF2281 
+UF2293 UF2299 UF2330 UF2357 UF2379 UF2380 UF2395 UF2415 UF2472 UF2475 UF2480 UF2487 UF2516 UF2545 
+ 
+UF2554 
+
+
+#CF0041 child_height_aic=131, which >3z away from WHO median for 4 yo boy
+#CF0123 vA height 120cm, vb 126. Unlikely but unable to correct
+#CF0129 cheight missing but child_height_aic==113
+WHOz$cheight[WHOz$person_id=="CF0129"&WHOz$redcap=="a"]<-113
+#CF0260 vA height=150, vb height=123; change vA height to 115
+WHOz$cheight[WHOz$person_id=="CF0260"&WHOz$redcap=="a"]<-115
+#CF0436
+
+#KF0448 vb weight and height both 999. Used values from visit A instead
+WHOz$cweight[WHOz$person_id=="KF0448"&WHOz$redcap=="b"]<-11
+WHOz$cheight[WHOz$person_id=="KF0448"&WHOz$redcap=="b"]<-84
+#RF0568 vb weight 999 and height less than vA
+WHOz$cweight[WHOz$person_id=="RF0568"&WHOz$redcap=="b"]<-10
+WHOz$cheight[WHOz$person_id=="RF0568"&WHOz$redcap=="b"]<-87
+#CF0307 vA weight 175kg but vb weight 20 kg(more realistic for 6 year-old). Likely decimal point off
+WHOz$cweight[WHOz$person_id=="CF0307"&WHOz$redcap=="a"]<-17.5
+#CF0404 vA weight 121kg but vb weight 23 kg, and subsequent visit makes 21kg more likely
+WHOz$cweight[WHOz$person_id=="CF0404"&WHOz$redcap=="a"]<-21
+#KF0706 vb weight 121 kg but vA 12 kg; change to 12.1 kg
+WHOz$cweight[WHOz$person_id=="KF0706"&WHOz$redcap=="b"]<-12.1
+#RF0405
+#This is taking a long time. For many subjects, additional data from different visits can help identify anomaly. Will screen for differences between visits for differences that are too large.
+#weight first
+wtcorrection<-WHOz[c("person_id", "redcap", "cweight")]
+wt_wide<-reshape(wtcorrection, 
+                      timevar = "redcap",
+                     idvar = "person_id",
+                     direction = "wide")
+wt_wide$wtdiff.a<-(wt_wide$cweight.b-wt_wide$cweight.a)
+wt_wide$wtdiff.b<-(wt_wide$cweight.c-wt_wide$cweight.b)
+wt_wide$wtdiff.c<-(wt_wide$cweight.d-wt_wide$cweight.c)
+wt_wide$wtdiff.d<-(wt_wide$cweight.e-wt_wide$cweight.d)
+wt_wide$wtdiff.e<-(wt_wide$cweight.f-wt_wide$cweight.e)
+wt_wide$wtdiff.f<-(wt_wide$cweight.g-wt_wide$cweight.f)
+wt_wide$wtdiff.g<-(wt_wide$cweight.h-wt_wide$cweight.g)
+wt_wide$wtdiff.h<-(wt_wide$cweight.i-wt_wide$cweight.h)
+wt_wide$wtdiff.i<-(wt_wide$cweight.j-wt_wide$cweight.i)
+wt_wide$wtdiff.j<-NA
+wt_wide$wtdiff.info<-NA
+wt_long<-reshape(wt_wide,
+                    varying = c(2:23),
+                    timevar = "redcap",
+                    times = c("info", "a", "b","c", "d","e", "f", "g", "h", "i","j"),
+                     direction = "long")
+WHOz$ageyr<-(WHOz$age_days/365)
+
+```
+
+#Height
+```{r}
+
+
+library(anthro) #WHO anthropometrics R package v0.9.3 (May 21, 2020)
+#gender_aic 0=male 1=female, need to convert to WHO code sex parameters require 1=male, 2=female
+WHOz$sex<-NA
+WHOz$sex[WHOz$gender_aic==0]<-1
+WHOz$sex[WHOz$gender_aic==1]<-2
+table(WHOz$gender_aic, WHOz$sex, exclude = NULL)
+WHOtable<-with(
+  WHOz,
+  anthro_zscores(
+    sex = sex, age = as.numeric(age_days),
+    weight = as.numeric(child_weight_aic), lenhei = as.numeric(child_height_aic)
+  )
+)
+WHOmerge<-cbind(WHOz, WHOtable)
+
+```
+
+#WHO standards for older children and adults
+```{r}
+1. Download the file "who2007_R.zip" to a basic directory [dir] where you
+want to include the package.
+2. Restore reference data sets using the following commands:
+wfawho2007<-read.table("[dir]\\ wfawho2007.txt",header=T,sep="",skip=0)
+hfawho2007<-read.table("[dir]\\ hfawho2007.txt",header=T,sep="",skip=0)
+bfawho2007<-read.table("[dir]\\ bfawho2007.txt",header=T,sep="",skip=0)
+3. Source the who2007.r file in the package directory [dir], using the command
+> source("[dir]\\who2007.r")
+```
+
+#SES
+```{r}
+
+```
+
+#enrollment figure: total enrolled vs screened
+```{r}
+df<-dfmerge
+length(unique(df$person_id)) #8007 screened, person_id assigned
+length(unique(df$person_id[df$redcap=="info"])) #7543 enrolled, info available
+enrolled_id<-df$person_id[df$redcap=="info"]
+#Enrolled subset
+enrolled<-df[df$person_id %in% enrolled_id,]
+df<-enrolled
+```
+#define AFI
+```{r}
+#define p_fever as temp >=38
+df$p_fever<-NA
+df$p_fever[df$temp>=38]<-1
+df$p_fever[df$temp<38]<-0
+table(df$p_fever, df$redcap, exclude = NULL)
+table(df$sym_fever, df$redcap, exclude = NULL)
+table(df$p_fever, df$sym_fever, df$redcap, exclude = NULL)
+#afi variable, either reported fever or temperature 38C or higher
+df$afi<-NA
+df$afi[df$sym_fever==1|df$temp>=38]<-1
+df$afi[df$sym_fever==0&df$temp<38]<-0
+table(df$afi, df$redcap, exclude = NULL) #7509 with afi @ vA
+#person_id of subjects with afi @ vA
+```
+#Save enrolled
+```{r}
+save(df, file=paste(Sys.Date(),"enrolled.rda", sep="_"))
+load("C:/Users/David Vu/My Cloud/TurtleCloudSync/Work/GitHub/DENV_malaria_coinfection_MS/2020-06-12_enrolled.rda")
+```
+#enrollment figure: with fever symptom or at triage (vA AFI subset)
+```{r}
+#-------------------6/12/20
+table(df$redcap[df$afi==1], exclude = NULL)
+afi_subset<-subset(df, afi == 1)#8501, includes some that were not febrile at vA?
+n_distinct(afi_subset$person_id)#7514
+vA_afi<-subset(afi_subset, redcap == "a")
+length(unique(vA_afi$person_id))#7509
+vA_afi_id<-vA_afi$person_id
+cohort<-df[df$person_id %in% vA_afi_id,]
+length(unique(cohort$person_id))
+#Save enrolled cohort
+save(cohort, file=paste(Sys.Date(),"vA_afi_cohort.rda", sep="_"))
+load("C:/Users/David Vu/My Cloud/TurtleCloudSync/Work/GitHub/DENV_malaria_coinfection_MS/2020-06-12_vA_afi_cohort.rda")
+```
+#consolidating malaria data into malaria infection variable
+```{r}
+#search for malaria results
+grep("mal", names(cohort), value = TRUE)
+#potential variables with malaria results: "value_rdt_malaria_kenya" (all NA), "result_rdt_malaria_kenya" (all NA), "notes_rdt_malaria_kenya" (all NA), "mal_test" (appears to be discriptor of what malaria test was used), "oth_mal_test" (appears to be some notes), "malaria_results" (numbers 0-5, 0=neg, 1=1+, 2=2+, 3=3+, 4=4+, 5=pending), "result_microscopy_malaria_kenya" (0, 1, 98=missing), "notes_microscopy_malaria_kenya" (text)
+temp<-cohort[,c("value_rdt_malaria_kenya", "result_rdt_malaria_kenya", "notes_rdt_malaria_kenya", "mal_test", "oth_mal_test", "malaria_results", "result_microscopy_malaria_kenya", "notes_microscopy_malaria_kenya")]
+table(cohort$malaria_results, cohort$result_microscopy_malaria_kenya, exclude = NULL)
+table(cohort$result_rdt_malaria_kenya, exclude = NULL) #all NA
+table(cohort$rdt_results) #I think this is where the malaria RDT data is, because other variable referencing rdt are NA
+table(cohort$rdt_results, cohort$result_microscopy_malaria_kenya, exclude = NULL)
+#Consolidate results into "malaria"
+#Prioritize microscopy results. Any positive microscopy will be considered positive. #When no microscopy results available, will use RDT data
+cohort$malaria<-NA
+#First use RDT results, then write over with microscopy
+cohort$malaria[cohort$rdt_results==0] <- 0
+cohort$malaria[cohort$rdt_results==1] <- 1 #Omit results=5 (pending)
+table(cohort$malaria, cohort$rdt_results, exclude = NULL)
+#Next, microscopy results, first capturing negative tests
+table(cohort$rdt_results, cohort$result_microscopy_malaria_kenya, exclude = NULL)#Should add 3816 neg, 1902 pos, and convert 501 RDT pos to neg, and 54 RDT neg to pos
+cohort$malaria[cohort$result_microscopy_malaria_kenya==0] <- 0
+cohort$malaria[cohort$malaria_results==0] <- 0
+#overwrite negative with any microscopy positive
+cohort$malaria[cohort$malaria_results==1|cohort$result_microscopy_malaria_kenya==1|cohort$result_microscopy_malaria_kenya==2|cohort$result_microscopy_malaria_kenya==3|cohort$result_microscopy_malaria_kenya==4] <- 1
+#---------------6/18/20
+table(cohort$malaria, exclude = NULL) #turned 501 pos RDTs negative
+
+table(cohort$malaria, cohort$malaria_results, exclude = NULL)
+table(cohort$malaria, cohort$rdt_results, exclude = NULL)
+#Use RDT only if microscopy results not available
+
+table(cohort$malaria, exclude = NULL)
+
+#checking new variable
+table(cohort$malaria, cohort$result_microscopy_malaria_kenya, exclude = NULL)
+table(cohort$malaria, cohort$malaria_results, exclude = NULL)
+table(cohort$malaria, cohort$rdt_results, exclude = NULL)
+table(cohort$result_microscopy_malaria_kenya, cohort$rdt_results, exclude = NULL)
+```
+#DENV infection at vA
+```{r}
+#-----------------------------------seroconversion
+#reshape long to wide
+serologies<-NA
+serologies<-cohort[c("person_id", "redcap", "result_igg_denv_stfd")]
+serologies$DENVsero<-NA #this is where serology testing will be stored, associated with the acute visit
+sero_wide<-reshape(serologies,
+                    timevar = "redcap",
+                     idvar = "person_id",
+                     direction = "wide")
+table(sero_wide$result_igg_denv_stfd.a, sero_wide$result_igg_denv_stfd.b, exclude = NULL) #4136 tested for both vA and vB (12 99s are equivocal for one of the two)
+#Defined seroconversion/reversion/etc
+#visit a seroconversion variable "DENVsero.a"
+sero_wide<-within(sero_wide, DENVsero.a[sero_wide$result_igg_denv_stfd.a==0&sero_wide$result_igg_denv_stfd.b==1]<-"AnegBpos") #42
+sero_wide<-within(sero_wide, DENVsero.a[sero_wide$result_igg_denv_stfd.a==0&sero_wide$result_igg_denv_stfd.b==0]<-"AnegBneg") #3904
+sero_wide<-within(sero_wide, DENVsero.a[sero_wide$result_igg_denv_stfd.a==1&sero_wide$result_igg_denv_stfd.b==0]<-"AposBneg") #40
+sero_wide<-within(sero_wide, DENVsero.a[sero_wide$result_igg_denv_stfd.a==1&sero_wide$result_igg_denv_stfd.b==1]<-"AposBpos") #138
+#3385 NA which is missing one or both visits 
+sero_wide<-within(sero_wide, DENVsero.a[is.na(sero_wide$result_igg_denv_stfd.a)&sero_wide$result_igg_denv_stfd.b==1]<-"AnaBpos") #13
+sero_wide<-within(sero_wide, DENVsero.a[is.na(sero_wide$result_igg_denv_stfd.a)&sero_wide$result_igg_denv_stfd.b==0]<-"AnaBneg") #279
+sero_wide<-within(sero_wide, DENVsero.a[sero_wide$result_igg_denv_stfd.a==0&is.na(sero_wide$result_igg_denv_stfd.b)]<-"AnegBna") #2384
+sero_wide<-within(sero_wide, DENVsero.a[sero_wide$result_igg_denv_stfd.a==1&is.na(sero_wide$result_igg_denv_stfd.b)]<-"AposBna") #117
+sero_wide<-within(sero_wide, DENVsero.a[is.na(sero_wide$result_igg_denv_stfd.a)&is.na(sero_wide$result_igg_denv_stfd.b)]<-"AnaBna")#579
+table(sero_wide$result_igg_denv_stfd.a, sero_wide$result_igg_denv_stfd.b, sero_wide$DENVsero.a, exclude = NULL)
+#--------------------------------------
+sero_long<-reshape(sero_wide, varying = c(3,5,7,9,11,13,15,17,19,21,23), timevar = "redcap", times = c("info", "a", "b","c", "d","e", "f", "g", "h", "i","j"), direction = "long") #will not reshape results_igg_denv.x so that this now will appear with each visit
+sero_long<-sero_long[-c(15)] #get rid of extra "id" column
+cohortmerge<- merge(cohort, sero_long,  by=c("person_id", "redcap"), all = FALSE, sort = TRUE)
+#keep results_igg_denv.x
+#Interim save
+save(cohortmerge, file=paste(Sys.Date(),"vA_afi_cohort.rda", sep="_"))
+load("C:/Users/David Vu/My Cloud/TurtleCloudSync/Work/GitHub/DENV_malaria_coinfection_MS/2020-06-18_vA_afi_cohort.rda")
+#----------------7/1/20
+load("T:/WD Sync/TurtleCloudSync/Work/GitHub/DENV_malaria_coinfection_MS/2020-06-18_vA_afi_cohort.rda")
+cohort<-cohortmerge
+#---create DENVinfect variable, starting with seroconverters which may include PCR negative
+cohort$DENVinfect<-NA #1749 variables
+cohort$DENVinfect[cohort$DENVsero=="AnegBpos"]<-1
+cohort$DENVinfect[cohort$DENVsero=="AposBneg"]<-0
+cohort$DENVinfect[cohort$DENVsero=="AnegBneg"]<-0
+cohort$DENVinfect[cohort$DENVsero=="AposBpos"]<-0
+cohort$DENVinfect[cohort$DENVsero=="AnaBneg"]<-0 #also if visit B IgG is 0 then no seroconversion even if vA missing
+table(cohort$DENVsero, cohort$DENVinfect, exclude = NULL)
+#Interim save
+save(cohort, file=paste(Sys.Date(),"vA_afi_sero.rda", sep="_"))
+load("T:/WD Sync/TurtleCloudSync/Work/GitHub/DENV_malaria_coinfection_MS/2020-07-01_vA_afi_sero.rda")
+```
+#Enrollment figure
+```{r}
+#---------------number tested for DENV
+#start with seroconversion results
+#add PCR results: if no seroconversion testing, then use PCR. if seroconversion pos, then leave pos since PCR could be neg. If seroconversion neg, then use PCR since PCR could be pos without seroconversion
+table(cohort$DENVinfect, exclude = NULL) #42 pos by seroconversion, 4361 neg (4403 tested)
+table(cohort$DENVinfect, cohort$result_pcr_denv_kenya, exclude = NULL) #PCR can add 2330 tested
+table(cohort$DENVinfect[is.na(cohort$DENVinfect)], cohort$result_pcr_denv_kenya[is.na(cohort$DENVinfect)], exclude = NULL)
+  cohort$DENVinfect[is.na(cohort$DENVinfect)]<-cohort$result_pcr_denv_kenya[is.na(cohort$DENVinfect)] #adds 49 PCR pos, 2281 pcr neg 
+#need to convert 77 seroconversion negatives to pos based on PCR
+table(cohort$DENVinfect[cohort$result_pcr_denv_kenya==1])
+cohort$DENVinfect[cohort$result_pcr_denv_kenya==1]<-1  
+#add RT PCR results
+table(cohort$DENVinfect, cohort$denv_result_ufi2, exclude = NULL)
+table(cohort$DENVinfect[is.na(cohort$DENVinfect)], cohort$denv_result_ufi2[is.na(cohort$DENVinfect)], exclude = NULL) #should add 20 neg, 17 pos
+  cohort$DENVinfect[is.na(cohort$DENVinfect)]<-cohort$denv_result_ufi2[is.na(cohort$DENVinfect)]
+#convert 332 neg to pos based on RT-PCR
+table(cohort$DENVinfect[cohort$denv_result_ufi2==1])
+cohort$DENVinfect[cohort$denv_result_ufi2==1]<-1  
+#Interim save
+save(cohort, file=paste(Sys.Date(),"afi_denvinfect.rda", sep="_"))
+load("T:/WD Sync/TurtleCloudSync/Work/GitHub/DENV_malaria_coinfection_MS/2020-07-21_afi_denvinfect.rda")
+```
+#Strata
+```{r}
+table(cohort$DENVinfect, cohort$malaria, exclude = NULL)
+#subset to vA only
+  vA<-cohort[cohort$redcap=="a",]
+table(vA$DENVinfect, vA$malaria, exclude = NULL)
+
+#Strata "DENV_solo" "malaria_solo" "DENV_malaria_co" "DENV_malaria_neg"
+vA$strata<-NA
+vA$strata[vA$DENVinfect==1&vA$malaria==1]<-"DENV_malaria_co"
+vA$strata[vA$DENVinfect==1&vA$malaria==0]<-"DENV_solo"
+vA$strata[vA$DENVinfect==0&vA$malaria==1]<-"malaria_solo"
+vA$strata[vA$DENVinfect==0&vA$malaria==0]<-"DENV_malaria_neg"
+table(vA$strata, exclude = NULL)
+save(vA, file=paste(Sys.Date(),"vA_strata.rda", sep="_"))
+load("T:/WD Sync/TurtleCloudSync/Work/GitHub/DENV_malaria_coinfection_MS/2020-07-21_vA_strata.rda")
+```
+
+
+
+#-------------9/13/2020
+
+#Table 1, enrolled vs excluded/complete
+```{r}
+#Current data should have 7509 rows that are subjects that are enrolled and were included due to fever
+vA$complete<-NA
+vA$complete[is.na(vA$strata)]<-0
+table(vA$complete, exclude = NULL)
+vA$complete[is.na(vA$complete)]<-1
+#Sex gender_aic 0=male 1=female
+library(tableone)
+CreateTableOne(data=vA)
+#returned all columns with only NA/NaN. Will exclude these from database.
+#drop variables with no data
+#droppedvar<- names(vA) %in% c("other_village_or_hospital", "house_number", "withdrew_other", "lost_follow_up_why", "participant_status_other", "u24_participant", "u24_follow_up", "u24_cohort", "u24_c_f_name", "u24_c_s_name", "u24_c_t_name", "u24_c_fth_name", "u24_c_surname", "u24_date_of_birth", "u24_phonenumber", "protected_patient_info_u24_complete", "c_surname", "c_f_name", "c_s_name", "c_t_name", "c_fth_name", "phone_number", "father_fourth_name", "dem_hoc_dob", "dem_hoc_surname", "dem_hoc_mname", "dem_hoc_othername", "dem_hoh_surname", "dem_hoc_lname", "dem_hoc_fname", "dem_hoh_fname", "dem_hoh_lname", "dem_hoh_othername", "dem_hoh_mname", "dem_hoh_dob", "dem_child_fname", "dem_child_mname", "dem_child_lname", "dem_child_othername", "dem_child_familyname", "dem_house_data_type_other", "dem_house_altitude", "dem_house_accuracy", "dem_house_longitude", "dem_house_latitude", "dem_compound_accuracy", "dem_compound_altitude", "dem_compound_longitude", "dem_compound_latitude", "hcc_gps_data_type", "hcc_gps_data_type_other", "gps_lat", "gps_long", "aic_village_gps_data_type_other", "aic_village_gps_accuracy", "where_travel_aic_gps_type3", "where_travel_aic_gps_type4", "date_tested_pcr_denv_stfd", "value_pcr_denv_2_stfd", "value_pcr_denv_3_stfd", "value_pcr_denv_4_stfd", "value_pcr_denv_5_stfd", "photo_pcr_denv_stfd", "notes_pcr_denv_stfd", "name_tech_pcr_chikv_stfd", "sample_pcr_chikv_stfd", "aliquot_id_pcr_chikv_stfd", "date_tested_pcr_chikv_stfd", "result_pcr_chikv_stfd", "value_pcr_chikv_1_stfd", "photo_pcr_chikv_stfd", "notes_pcr_chikv_stfd", "value_pcr_denv_5_kenya", "aliquot_id_igm_denv_kenya", "name_tech_igm_denv_kenya", "sample_igm_denv_kenya", "date_tested_igm_denv_kenya", "kit_vs_in_house_igm_denv_kenya", "kit_igm_denv_kenya", "other_assay_igm_denv_kenya", "which_kit_igm_denv_kenya", "antigen_used_igm_denv_kenya", "other_antigen_igm_denv_kenya", "value_igm_denv_kenya", "neg_control_igm_denv_kenya", "pos_control_igm_denv_kenya", "result_igm_denv_kenya", "photo_igm_denv_kenya", "notes_igm_denv_kenya", "other_antigen_igm_chikv_kenya", "antigen_used_igm_chikv_kenya", "value_igm_chikv_kenya", "notes_igm_chikv_kenya", "other_assay_igm_denv_stfd", "other_kit_igm_denv_stfd", "antigen_used_igm_denv_stfd", "other_antigen_igm_denv_stfd", "photo_igm_denv_stfd", "notes_igm_denv_stfd", "other_assay_igm_chikv_stfd", "other_kit_igm_chikv_stfd", "antigen_used_igm_chikv_stfd", "other_antigen_igm_chikv_stfd", "photo_igm_chikv_stfd", "notes_igm_chikv_stfd", "aliquot_id_rdt_denv_kenya", "date_collected_rdt_denv_kenya", "name_tech_rdt_denv_kenya", "date_tested_rdt_denv_kenya", "antigen_used_rdt_denv_kenya", "other_antigen_rdt_denv_kenya", "value_rdt_denv_kenya", "result_rdt_denv_kenya", "photo_rdt_denv_kenya", "notes_rdt_denv_kenya", "aliquot_id_rdt_malaria_kenya", "date_collected_rdt_malaria_kenya", "name_tech_rdt_malaria_kenya", "date_tested_rdt_malaria_kenya", "antigen_used_rdt_malaria_kenya", "other_antigen_rdt_malaria_kenya", "value_rdt_malaria_kenya", "result_rdt_malaria_kenya", "photo_rdt_malaria_kenya", "notes_rdt_malaria_kenya", "aliquot_id_other_kenya", "date_tested_other_kenya", "assay_other_other_kenya", "name_tech_other_kenya", "antigen_used_other_kenya", "other_antigen_other_kenya", "date_collected_other_kenya", "value_other_kenya", "result_other_kenya", "photo_other_kenya", "notes_other_kenya", "aliquot_id_other_stfd", "date_tested_other_stfd", "assay_other_other_stfd", "name_tech_other_stfd", "antigen_used_other_stfd", "other_antigen_other_stfd", "date_collected_other_stfd", "value_other_stfd", "result_other_stfd", "photo_other_stfd", "notes_other_stfd", "submissiondate", "when_vaccinated_japenceph", "oth_where_hospitalized_4_aic", "oth_where_hospitalized_5_aic", "study_id", "start", "end", "today", "deviceid", "subscriberid", "village", "interviewer_name", "oth_interviewer_name", "interview_date", "house_id", "child_individual_id", "age_calc_rc", "gender", "child_height", "child_weight", "occupation", "oth_occupation", "kid_highest_level_education", "oth_kid_educ_level", "mom_highest_level_education", "oth_mom_educ_level", "number_siblings", "travel", "where_travel", "stay_overnight", "moved_away", "duration_away", "duration_away_other", "where_away", "outdoor_activity", "time_outdoors", "mosquito_bite_frequency", "avoid_mosquitoes", "repellent", "mosquito_coil", "mosquito_net", "mosquito_bites", "mosquitoes_day", "mosquitoes_night", "water_collection", "type_water_collection", "home_lifestyle_changes", "illness_today", "number_illnesses", "symptoms", "oth_fever_symptoms", "duration", "seek_medical_care", "type_medical_care", "hospital", "oth_where_med_seek", "hospitalized", "number_hospitalizations", "reason_hospitalized_1", "when_hospitalized_1", "where_hospitalized_1", "duration_hospitalized_1", "reason_hospitalized_2", "when_hospitalized_2", "where_hospitalized_2", "oth_where_hospitalized_2", "duration_hospitalized_2", "reason_hospitalized_3", "when_hospitalized_3", "where_hospitalized_3", "oth_where_hospitalized_3", "duration_hospitalized_3", "reason_hospitalized_4", "when_hospitalized_4", "where_hospitalized_4", "oth_where_hospitalized_4", "duration_hospitalized_4", "reason_hospitalized_5", "when_hospitalized_5", "where_hospitalized_5", "oth_where_hospitalized_5", "duration_hospitalized_5", "status", "u24_clinical_officer_name___1", "u24_clinical_officer_name___2", "u24_clinical_officer_name___98", "u24_clinical_officer_name_other", "u24_interview_date", "u24_village", "u24_village_other", "u24_age_calc", "u24_child_age", "u24_gender", "u24_temp", "u24_height_measurement___0", "u24_height_measurement___1", "u24_height_measurement___98", "u24_height_measurement___99", "u24_height", "u24_height_stad", "u24_height_mt", "u24_weight", "u24_first_hc", "u24_heart_rate", "u24_resp_rate", "u24_bp_available", "u24_systolic_pressure", "u24_disastolic_pressure", "u24_pulse_ox", "u24_can_visual_acuity", "u24_visual_acuity_left", "u24_visual_acuity_right", "u24_past_medical_history___1", "u24_past_medical_history___2", "u24_past_medical_history___3", "u24_past_medical_history___4", "u24_past_medical_history___5", "u24_past_medical_history___6", "u24_past_medical_history___7", "u24_past_medical_history___8", "u24_past_medical_history___9", "u24_past_medical_history___10", "u24_past_medical_history___11", "u24_past_medical_history___12", "u24_past_medical_history___13", "u24_past_medical_history___98", "u24_past_medical_history___99", "u24_oth_past_medical_history", "u24_currently_taking_medications", "u24_current_medications___1", "u24_current_medications___2", "u24_current_medications___3", "u24_current_medications___4", "u24_current_medications___5", "u24_current_medications___6", "u24_current_medications___7", "u24_current_medications___8", "u24_current_medications___9", "u24_current_medications___10", "u24_current_medications___98", "u24_current_medications___99", "u24_oth_current_medications", "u24_pregnant", "u24_ever_had_chikv", "u24_chikv_confirmed_blood_test", "u24_ever_had_denv", "u24_confirmed_denv_blood_test", "u24_how_many_times", "u24_when_dengue", "u24_hospitalized_dengue", "u24_how_think_infected___1", "u24_how_think_infected___2", "u24_how_think_infected___3", "u24_how_think_infected___4", "u24_how_think_infected___5", "u24_how_think_infected___6", "u24_how_think_infected___7", "u24_how_think_infected___98", "u24_how_think_infected___99", "u24_how_acquired", "u24_symptoms_denv_chikv___1", "u24_symptoms_denv_chikv___2", "u24_symptoms_denv_chikv___3", "u24_symptoms_denv_chikv___4", "u24_symptoms_denv_chikv___5", "u24_symptoms_denv_chikv___6", "u24_symptoms_denv_chikv___7", "u24_symptoms_denv_chikv___8", "u24_symptoms_denv_chikv___9", "u24_symptoms_denv_chikv___10", "u24_symptoms_denv_chikv___11", "u24_symptoms_denv_chikv___12", "u24_symptoms_denv_chikv___13", "u24_symptoms_denv_chikv___14", "u24_symptoms_denv_chikv___15", "u24_symptoms_denv_chikv___16", "u24_symptoms_denv_chikv___17", "u24_symptoms_denv_chikv___18", "u24_symptoms_denv_chikv___19", "u24_symptoms_denv_chikv___20", "u24_symptoms_denv_chikv___21", "u24_symptoms_denv_chikv___22", "u24_symptoms_denv_chikv___23", "u24_symptoms_denv_chikv___24", "u24_symptoms_denv_chikv___25", "u24_symptoms_denv_chikv___26", "u24_symptoms_denv_chikv___27", "u24_symptoms_denv_chikv___28", "u24_symptoms_denv_chikv___29", "u24_symptoms_denv_chikv___30", "u24_symptoms_denv_chikv___31", "u24_symptoms_denv_chikv___32", "u24_symptoms_denv_chikv___33", "u24_symptoms_denv_chikv___34", "u24_symptoms_denv_chikv___0", "u24_symptoms_denv_chikv___98", "u24_symptoms_denv_chikv___99", "u24_other_symptom_denv_chikv", "u24_symptom_duration", "u24_symptoms_since", "u24_joint_pain_since", "u24_joint_pain_today", "u24_current_bout_duration", "u24_joint_pain_last_week", "u24_joint_pain_last_month", "u24_physical_exam_complete", "u24_interviewer_name", "u24_interviewer_name_other", "u24_number_siblings", "u24_number_of_rooms", "u24_number_of_people_living_in", "u24_children_in_house", "u24_employed_full_time", "u24_employed_part_time", "u24_housing_type___1", "u24_housing_type___2", "u24_housing_type___3", "u24_housing_type___98", "u24_housing_type___99", "u24_roof_type___1", "u24_roof_type___2", "u24_roof_type___3", "u24_roof_type___4", "u24_roof_type___9", "u24_flooring_type___1", "u24_flooring_Dropping")
+#vAclean <- vA[!droppedvar]
+
+table(vA$gender_aic, exclude = NULL)
+table(vA$complete, vA$gender_aic, exclude = NULL)
+sex<-table(vA$complete, vA$gender_aic)
+chisq.test(sex) #X-squared = 1.4017, df = 1, p-value = 0.2364
+table(vA$age_calc, exclude = NULL)
+table(vA$age_calc_rc, exclude = NULL) #all NA
+table(vA$dob, exclude = NULL) #all NA
+table(vA$)
+```
+#remove empty variables
+```{r}
+table(vA$other_village_or_hospital, exclude = NULL)
+
+# df = subset(mydata, select = -c(x,z) )
+df=subset(vA, select = -c(other_village_or_hospital, house_id, house_number, participant_status_other, withdrew_why___1, withdrew_why___2, withdrew_why___3, withdrew_why___4, withdrew_why___5, withdrew_why___6, withdrew_why___7, withdrew_why___8, withdrew_why___9, withdrew_why___10, withdrew_why___11, withdrew_why___98, withdrew_other, lost_follow_up_why, u24_participant, u24_follow_up, u24_cohort, u24_c_f_name, u24_c_s_name, u24_c_t_name, u24_c_fth_name, u24_c_surname, ))
+table(df$u24, exclude = NULL)
+u24<-vA[,c(grep(vA, u24))]
+```
+
+
+#20-09-01 analysis
+```{r}
+#Age is aic_calculated_age variable, in years
+table(vA$aic_calculated_age)
+#Sex is gender_aic
+table(vA$gender_aic)
+#SES variables: telephone|radio|television|bicycle|motor_vehicle|domestic_worker
+table(vA$telephone, exclude = NULL)
+class(vA$telephone)
+vA$telephone[vA$telephone=="8"]<-NA #converted 
+table(vA$radio, exclude = NULL)
+table(vA$television, exclude = NULL)
+table(vA$bicycle, exclude = NULL)
+table(vA$motor_vehicle, exclude = NULL)
+table(vA$domestic_worker, exclude = NULL)
+#SES is "telephone|radio|television|bicycle|motor_vehicle|domestic_worker"
+  ses<-(vA[, grepl("telephone|radio|television|bicycle|motor_vehicle|domestic_worker", names(vA))])
+  class(vA$telephone)
+  vA$ses_sum<-rowSums(vA[, c("telephone","radio","television","bicycle","motor_vehicle","domestic_worker")], na.rm = TRUE)
+  table(vA$ses_sum)
+table(vA$)
+library(tableone)
+library(table1)
+table1(~factor(vA$gender_aic + vA$age_calc))
+```
+
+
+
+
+
+
+#Strata
+```{r}
+complete<-vA[vA$DENVtested==1&!is.na(vA$malaria),]
+complete$DENVany<-complete$DENVinfect #start with seroconversions
+table(complete$DENVany, complete$DENVinfect, exclude = NULL)
+table(complete$DENVany, complete$result_pcr_denv_kenya, exclude = NULL) #add 75 PCR pos sero neg, and 39 pos sero NA 
+complete$DENVany[complete$result_pcr_denv_kenya==1]<-1
+table(complete$DENVany, complete$result_pcr_denv_kenya, exclude = NULL) #add 75 PCR pos sero neg, and 39 pos sero NA = 156 total
+complete$DENVany[complete$denv_result_ufi2==1]<-1
+table(complete$DENVany, complete$denv_result_ufi2, exclude = NULL) #add 75 PCR pos sero neg, and 39 pos sero NA = 485 total
+table(complete$denv_result_ufi2, complete$result_pcr_denv_kenya, complete$DENVany, exclude = NULL)
+table(complete$DENVany[!complete$DENVany==1|is.na(complete$DENVany)], exclude = NULL)
+complete$DENVany[!complete$DENVany==1|is.na(complete$DENVany)]<-0
+table(complete$DENVany, exclude = NULL)
+#Strata "DENV_solo" "malaria_solo" "DENV_malaria_co" "DENV_malaria_neg"
+complete$strata<-NA
+complete$strata[complete$DENVany==1&complete$malaria==1]<-"DENV_malaria_co"
+complete$strata[complete$DENVany==1&complete$malaria==0]<-"DENV_solo"
+complete$strata[complete$DENVany==0&complete$malaria==1]<-"malaria_solo"
+complete$strata[complete$DENVany==0&complete$malaria==0]<-"DENV_malaria_neg"
+table(complete$strata, exclude = NULL)
+#Interim save
+save(complete, file=paste(Sys.Date(),"completecases.rda", sep="_"))
+load("T:/WD Sync/TurtleCloudSync/Work/GitHub/DENV_malaria_coinfection_MS/2020-07-15_completecases.rda")
+table(complete$strata, complete$DENVany)
+table(complete$strata, complete$malaria)
+```
+#Table 1. Characteristics of all enrolled and complete cases
+```{r}
+
+vA$complete<-NA
+vA$complete[]
+complete<-vA[vA]
+vA<-cohort[cohort$redcap=="a",]
+vA$DENVinfect[vA$result_pcr_denv_kenya==1]<-1
+vA$DENVinfect[vA$denv_result_ufi2==1]<-1
+table(vA$DENVinfect, exclude = NULL)
+#Any PCR neg indicates testing but does not negate positive seroconversion
+table(vA$DENVinfect[is.na(vA$DENVinfect)], vA$result_pcr_denv_kenya[is.na(vA$DENVinfect)], exclude = NULL)
+table(vA$DENVinfect[is.na(vA$DENVinfect)], vA$result_pcr_denv_kenya[is.na(vA$DENVinfect)], exclude = NULL)
+table(vA$DENVinfect[is.na(vA$DENVinfect)&(vA$result_pcr_denv_kenya=="0")], vA$result_pcr_denv_kenya[is.na(vA$DENVinfect)&(vA$result_pcr_denv_kenya=="0")], exclude = NULL)
+
+table(vA$DENVinfect[is.na(vA$DENVinfect)&vA$result_pcr_denv_kenya==0], vA$result_pcr_denv_kenya[is.na(vA$DENVinfect)&vA$result_pcr_denv_kenya==0], exclude = NULL)
+
+table(vA$DENVinfect[is.na(vA$DENVinfect)&vA$result_pcr_denv_kenya==0], exclude = NULL)
+
+#Define strata
+vA$strata<-NA
+
+
+#Any positive PCR
+table(vA$result_pcr_denv_kenya, vA$denv_result_ufi2, exclude = NULL)
+#table(vA$result_pcr_denv_kenya, vA$denv_result_ufi2, vA$DENVinfect, exclude = NULL) #1191 with no DENV test result (neither PCR, no seroconversion conclusion)
+#table(vA$DENVsero[is.na(vA$DENVinfect)&is.na(vA$denv_result_ufi2)&is.na(vA$result_pcr_denv_kenya)], exclude = NULL)
+
+#vA$DENVtested[is.na(vA$DENVinfect)&is.na(vA$denv_result_ufi2)&is.na(vA$result_pcr_denv_kenya)]<-0
+#table(vA$DENVtested, exclude = NULL)
+#all others should have at least one DENV test result and are eligible to be complete cases
+#vA$DENVtested[is.na(vA$DENVtested)]<-1
+#subset to define DENV pos/neg
+strata<-vA[c("person_id", "redcap", "DENVtested", "DENVsero", "result_pcr_denv_kenya", "denv_result_ufi2", "DENVinfect", "malaria")]
+#change DENVinfect to positive if any PCR positive
+strata$DENVinfect[strata$result_pcr_denv_kenya==1]<-1
+strata$DENVinfect[strata$denv_result_ufi2==1]<-1
+table(strata$DENVinfect, exclude = NULL)
+#change DENVinfect to neg if na, and either pcr is neg
+
+strata$DENVinfect[is.na(strata$DENVinfect)&strata$result_pcr_denv_kenya==0]
+                  ==!"AnegBpos"|is.na(strata$DENVinfect)&strata$result_pcr_denv_kenya==1]
+strata$DENVinfect[!strata$DENVinfect==1 & strata$result_pcr_denv_kenya==1]<-1
+```
+#remove all other variables from vA
+```{r}
+vAmerge<-vA[c("person_id", "redcap", "DENVtested")]
+testedDENV<- merge(cohort, vAmerge,  by=c("person_id", "redcap"), all= TRUE, sort = TRUE)
+#Interim save
+save(testedDENV, file=paste(Sys.Date(),"testedDENV.rda", sep="_"))
+load("C:/Users/David Vu/My Cloud/TurtleCloudSync/Work/GitHub/DENV_malaria_coinfection_MS/2020-06-18_testedDENV.rda")
+
+#---------------7/1/20
+load("T:/WD Sync/TurtleCloudSync/Work/GitHub/DENV_malaria_coinfection_MS/2020-06-18_vA_afi_cohort.rda")
+
+
+table(cohort$result_pcr_denv_kenya, exclude = NULL)#128 pos by Kenya PCR, 4147 neg, 4275 tested total
+table(cohort$denv_result_ufi2, exclude = NULL)#370 pos, 710 neg, total 1080 tested
+table(cohort$result_pcr_denv_kenya, cohort$denv_result_ufi2, exclude = NULL)#4369 combined tested
+length(unique(cohort$person_id[!is.na(cohort$result_pcr_denv_kenya)&!is.na(cohort$denv_result_ufi2)]))
+
+4369
+
+table(cohort$result_pcr_denv_kenya, cohort$denv_result_ufi2, cohort$DENVsero, exclude = NULL)#370 pos by ufi2
+
+cohort$DENVinfect[cohort$DENVinfect!=1&cohort$denv_result_ufi2==1]<-1
+cohort$DENVinfect[cohort$DENVinfect!=1&cohort$denv_result_ufi2==1]<-1
+table(cohort$DENVinfect[cohort$DENVinfect!=1&cohort$denv_result_ufi2==1], exclude = NULL)
+table(cohort$result_igg_denv_stfd.b[cohort$redcap=="b"], cohort$result_igg_denv_stfd.a[cohort$redcap=="b"], exclude = NULL)
+
+table(cohort$result_igg_denv_stfd.b[cohort$redcap=="b"])
+
+table(cohort$result_igg_denv_stfd.a[cohort$redcap=="a" & is.na(cohort$DENVsero) & cohort$result_igg_denv_stfd.b==0])
+table(cohort$results_igg_denv_stfd.b[cohort$result_igg_denv_stfd.b==0 & is.na(cohort$result_igg_denv_stfd.a)])
+```
+
+
+
+R01_lab_results <- within(R01_lab_results, malaria[R01_lab_results$rdt_result==0] <- 0)#rdt
+R01_lab_results <- within(R01_lab_results, malaria[R01_lab_results$malaria_results==0] <- 0)# Results of malaria blood smear	(+++ system)
+R01_lab_results <- within(R01_lab_results, malaria[R01_lab_results$result_microscopy_malaria_kenya==0] <- 0)#microscopy. this goes last so that it overwrites all the other's if it exists.
+R01_lab_results <- within(R01_lab_results, malaria[R01_lab_results$result_microscopy_malaria_kenya==1] <- 1) #this goes first. only use the others if this is missing.
+#Interim save
+save(cohort, file=paste(Sys.Date(),"DENVinfect_created.rda", sep="_"))
+load("C:/Users/David Vu/My Cloud/TurtleCloudSync/Work/GitHub/DENV_malaria_coinfection_MS/2020-06-16_DENVinfect_created.rda")
+```
+
+#Strata definitions
+```{r}
+#use 
+#tested by IgG result_igg_denv_stfd and combined PCR
+
+table(enrolled_vA_afi$result_igg_denv_stfd, exclude = NULL) #1=526 0=11384 99= 15 NA=36061
+table(enrolled_vA_afi$redcap_event_name, enrolled_vA_afi$result_igg_denv_stfd, exclude = NULL) #vA 1=297, 0=6335, 99=6, NA=871
+#How many vA pos have follow up vB?
+table(enrolled_vA_afi$redcap_event_name[enrolled_vA_afi$result_igg_denv_stfd==1], exclude = NULL) #vB=195, vC=17, vD=11, vE=2, vF=3, vH=1
+#How many vA neg have follow up vB?
+table(enrolled_vA_afi$redcap_event_name[enrolled_vA_afi$result_igg_denv_stfd==0], exclude = NULL) #vB=4226 vC=409 vD=308 vE=56 vF=35 vG=8 vH=5 vI=1 vJ=1
+#How many vA "99" or NA have follow up vB?
+table(enrolled_vA_afi$redcap_event_name[enrolled_vA_afi$result_igg_denv_stfd==99], exclude = NULL) #vB=7? vC=1 vD=1 
+#PCR
+#Relevant variables are "result_pcr_denv_kenya" "denv_result_ufi2"
+#Clarified with MMS that ufi2 results were produced by her. Ufi1 results were from J Waggoner and there are some aspects that need to be resolved. Will combine "result_pcr_denv_kenya" "denv_result_ufi2" in one. In case of discordance, will use ufi result based on Waggoner 2013 reported specificity
+#Multiplex qPCR "ufi2"
+#Create afi_pcr variable defined first by ufi2 results, then conventional pcr
+enrolled_vA_afi$afi_pcr<-NA
+enrolled_vA_afi$afi_pcr<-enrolled_vA_afi$denv_result_ufi2
+table(enrolled_vA_afi$afi_pcr, exclude = NULL)
+enrolled_vA_afi<-within(enrolled_vA_afi, afi_pcr[enrolled_vA_afi$afi_pcr==0| is.na(enrolled_vA_afi$afi_pcr)]<-result_pcr_denv_kenya[enrolled_vA_afi$afi_pcr==0| is.na(enrolled_vA_afi$afi_pcr)])
+table(enrolled_vA_afi$denv_result_ufi2, enrolled_vA_afi$result_pcr_denv_kenya, exclude = NULL)
+
+save(enrolled_vA_afi, file=paste(Sys.Date(),"enrolled_afi_vA.rda", sep="_"))
+#----------------------vA IgG pos and afi_pcr
+table(enrolled_vA_afi$redcap_event_name[enrolled_vA_afi$result_igg_denv_stfd==1&enrolled_vA_afi$redcap_event_name=="visit_a_arm_1"],enrolled_vA_afi$afi_pcr[enrolled_vA_afi$result_igg_denv_stfd==1&enrolled_vA_afi$redcap_event_name=="visit_a_arm_1"], exclude = NULL) #vA 16 (12.1%) pos, 116 neg, 165 NA
+#----------------------IgG neg and afi_pcr
+table(enrolled_vA_afi$redcap_event_name[enrolled_vA_afi$result_igg_denv_stfd==0&enrolled_vA_afi$redcap_event_name=="visit_a_arm_1"],enrolled_vA_afi$afi_pcr[enrolled_vA_afi$result_igg_denv_stfd==0&enrolled_vA_afi$redcap_event_name=="visit_a_arm_1"], exclude = NULL) #vA 408 (13.0%) pos, 2740 neg, 3187 NA
+#----------------------IgG equiv and afi_pcr
+table(enrolled_vA_afi$redcap_event_name[enrolled_vA_afi$result_igg_denv_stfd==99&enrolled_vA_afi$redcap_event_name=="visit_a_arm_1"],enrolled_vA_afi$afi_pcr[enrolled_vA_afi$result_igg_denv_stfd==99&enrolled_vA_afi$redcap_event_name=="visit_a_arm_1"], exclude = NULL) #vA 0 pos, 4 neg, 2 NA
+#----------------------IgG NA and afi_pcr
+table(enrolled_vA_afi$redcap_event_name[is.na(enrolled_vA_afi$result_igg_denv_stfd)&(enrolled_vA_afi$redcap_event_name=="visit_a_arm_1")],enrolled_vA_afi$afi_pcr[is.na(enrolled_vA_afi$result_igg_denv_stfd)&(enrolled_vA_afi$redcap_event_name=="visit_a_arm_1")], exclude = NULL) #vA 28 pos, 569 neg, 274 NA
+```
+```
+
+
+```{r}
+#old igrowup package
+  
+setwd("C:/Users/amykr/Box Sync/Amy Krystosik's Files/david coinfectin paper/igrowup_R")
+# Restore reference data sets using the following commands:
+  
+weianthro<-read.table("weianthro.txt",header=T,sep="",skip=0)
+lenanthro<-read.table("lenanthro.txt",header=T,sep="",skip=0)
+bmianthro<-read.table("bmianthro.txt",header=T,sep="",skip=0)
+hcanthro<-read.table("hcanthro.txt",header=T,sep="",skip=0)
+acanthro<-read.table("acanthro.txt",header=T,sep="",skip=0)
+ssanthro<-read.table("ssanthro.txt",header=T,sep="",skip=0)
+tsanthro<-read.table("tsanthro.txt",header=T,sep="",skip=0)
+wflanthro<-read.table("wflanthro.txt",header=T,sep="",skip=0)
+wfhanthro<-read.table("wfhanthro.txt",header=T,sep="",skip=0)
+
+#Source the igrowup_standard.r and igrowup_restricted.r files in the package directory [dir], using the command
+source("igrowup_standard.r")
+source("igrowup_restricted.r")
+
+
+#Step 2: Import your data file into R. The following example is using the data set survey.csv contained in the package igrowup_R.
+#Example: dataframe=survey
+
+#"C:/Users/amykr/Box Sync/Amy Krystosik's Files/david coinfectin paper/denvchikvmalariagps_symptoms.csv"
+
+survey<-read.csv("C:/Users/amykr/Box Sync/Amy Krystosik's Files/david coinfectin paper/denvchikvmalariagps_symptoms.csv",header=T,sep=",",skip=0,na.strings="")
+#Step 3:
+#Standard analysis
+igrowup.standard(FilePath="C:/Users/amykr/Box Sync/Amy Krystosik's Files/david coinfectin paper/who anthro", FileLab="MySurvey",mydf=survey,sex=GENDER,age=agemons,age.month=T,weight=WEIGHT,lenhei=HEIGHT,measure=measure,oedema=oedema,headc=HEAD)
+
+
+```

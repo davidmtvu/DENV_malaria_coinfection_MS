@@ -1,0 +1,1566 @@
+---
+title: "DENV malaria MS r2 data cleaning"
+author: "David M. Vu"
+date: "9/13/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+##This is a recovery file for the DENV malaria coinfection project. Initial files "DENVmal-01..." "DENVmal-02..." "DENVmal-04..." were lost on 5/29 or 5/30/2020. These included final versions of codes for subsetting of AFI data, and cleaning of symptoms and physical exam variables resulting in "2020-05-28_AIC_clincleaned.rda" file.
+#6/5/12 Recovered code from previous files
+#6/12/20 Merged into one file
+#Download data from REDCap
+```{r}
+setwd("Users/david/Documents/Work/GitHub/DENV_malaria_coinfection_MS") #need to run on console
+#library(redcapAPI)
+#library(REDCapR)
+#Redcap.token <- readLines("C:/Users/David Vu/Documents/Work/REDCap Data/LaBeaud R01/RedCapToken.txt") # Read API token from folder
+#REDcap.URL  <- 'https://redcap.stanford.edu/api/'
+#rcon <- redcapConnection(url=REDcap.URL, token=Redcap.token)
+
+#export data from redcap to R (must be connected via cisco VPN)
+#R01_lab_results <- redcap_read(redcap_uri  = REDcap.URL, token= Redcap.token, batch_size = 300, continue_on_error = TRUE) #had technical problems downloading in chunks
+
+#R01<-redcap_read_oneshot(redcap_uri= REDcap.URL, token=Redcap.token, raw_or_label = "raw", raw_or_label_headers = "raw", guess_type = FALSE, guess_max = 1000L, verbose = TRUE, config_options = NULL)$data #This worked
+save(R01, file=paste(Sys.Date(),"R01.rda", sep="_"))
+load("C:/Users/David Vu/My Cloud/TurtleCloudSync/Work/Manuscripts/2019-DENV-Pf/DENV-malaria-R-files/2020-04-10_R01.rda") #most recent working file, 84922 obs 1597 variables
+#write.csv(as.data.frame(R01), "200407-R01.csv", na="", row.names = F )
+R01back<-R01
+```
+#Remove erroneous records
+#in AIC database, person_id's are xF#### format. Some are xFA### or xF###. Reviewed REDCap database and these are duplicate records with little or no data. The records have now been deleted on the REDCap database as of June 12, 2020. However the current data set still contains these records.
+#Note HCC has not been looked at
+#Check to see if there are abnormal person_id's
+```{r}
+df<-R01
+#2nd character of person_id should be either F for AIC or C for HCC
+#3rd character should be a number
+#Look for xFA### person_id's
+table(substr(df$person_id, 2, 3)) #Observed "CA" "CB" "CC" "CD" "CE" "CF" "FA"; three with "A" as third character
+table(df$person_id[substr(df$person_id, 2, 3)=="FA"], df$redcap[substr(df$person_id, 2, 3)=="FA"]) #MFA096, visit "a" "info" and "U24
+#remove MFA096 rows
+dfclean<-df[!(df$person_id=="MFA096"),]
+table(substr(dfclean$person_id, 2, 3))
+df<-dfclean
+#How many person_id with only three numbers
+table(substr(df$person_id, 5,6), exclude = NULL)#8 with one person_id digit missing: "4" "5" "6"
+dftemp<-df
+dftemp$lasttwo<-substr(dftemp$person_id, 5, 6)
+table(dftemp$lasttwo)
+table(dftemp$person_id[dftemp$lasttwo==4]) #KF024, UF064, UF164, MF494
+table(dftemp$person_id[dftemp$lasttwo==5]) #UF095
+table(dftemp$person_id[dftemp$lasttwo==6]) #KF746, UF156
+#From REDCap
+#KF024, UF064, UF156, UF164, MF494 are all empty records
+#Corresponding records KF0024, UF0064, UF0156, UF0164, MF0494 have info
+#KF746 only has a record of a sample existing in Kenya
+#Corresponding record KF0746 missing these data
+dfclean<-df[!(df$person_id=="KF024"|df$person_id=="UF064"|df$person_id=="UF095"|df$person_id=="UF156"|df$person_id=="UF164"|df$person_id=="KF746"|df$person_id=="MF494"),]
+table(substr(dfclean$person_id, 5, 6))
+df<-dfclean
+```
+#Save
+```{r}
+save(df, file=paste(Sys.Date(),"AIC_personID_clean.rda", sep="_"))
+load("C:/Users/David Vu/My Cloud/TurtleCloudSync/Work/GitHub/DENV_malaria_coinfection_MS/2020-06-12_AIC_personID_clean.rda")
+```
+
+#AIC subset
+```{r}
+#subset AIC based on second character of person_id=="F"
+table(substr(df$person_id, 2, 2), exclude = NULL)#C:32076 F:52789 M:46 
+#"M" due to person_ids "DMxxxx" from DIS study. These should correspond to existing AIC person_ids. Exclude from analysis. Will need to merge data for these person_ids with original AIC
+#Subset based on second character of person_id==F
+AIC<-df[which(substr(df$person_id, 2, 2)=="F"),] #has 52789 obs
+save(AIC, file=paste(Sys.Date(),"AIC.rda", sep="_"))
+AICback<-AIC
+#-------------------------------
+#Exclude visits not applicable to this analysis
+AIC<- AIC[which(AIC$redcap_event_name!="visit_a2_arm_1"&AIC$redcap_event_name!="visit_b2_arm_1"&AIC$redcap_event_name!="visit_c2_arm_1"&AIC$redcap_event_name!="visit_d2_arm_1"&AIC$redcap_event_name!="visit_c2_arm_1"&AIC$redcap_event_name!="visit_u24_arm_1"&AIC$redcap_event_name!="visit_u24_fu_arm_1"), ] #50693, removed 2096 obs
+#-------------------------------
+#Number of assigned person_id = screened participants
+library(dplyr) 
+n_distinct(AIC$person_id) #8007 screened
+#Number of enrolled = those with redcap_event_name=="patient_informatio_arm_1"
+table(AIC$redcap_event_name, exclude = NULL)#7543 enrolled
+```
+#Additional variables: id_site (C,K,R,M,U), id_region (C,W), rural (1,0)
+```{r}
+#Define sites, city, rural ------------------------------------------------------
+table(AIC$site, exclude = NULL) #site variable does not provide actual study site
+#create id_site variable with the actual site from the first letter of person_id
+AIC$id_site<-substr(AIC$person_id, 1, 1)
+table(AIC$id_site, exclude = NULL)
+#create id_region to distinguish coast and west
+AIC$id_region<-NA
+AIC <- within(AIC, id_region[AIC$id_site=="M"] <- "C") #Msambweni
+AIC <- within(AIC, id_region[AIC$id_site=="U"] <- "C") #Ukunda
+AIC <- within(AIC, id_region[AIC$id_site=="K"] <- "W") #Kisumu
+AIC <- within(AIC, id_region[AIC$id_site=="C"] <- "W") #Chulaimbo
+AIC <- within(AIC, id_region[AIC$id_site=="R"] <- "W") #Mbaka Oromo
+table(AIC$id_site, AIC$id_region, exclude = NULL)
+##rural
+AIC$rural<-NA
+AIC <- within(AIC, rural[AIC$id_site=="C"] <- 1)
+AIC <- within(AIC, rural[AIC$id_site=="R"] <- 1)
+AIC <- within(AIC, rural[AIC$id_site=="M"] <- 1)
+AIC <- within(AIC, rural[AIC$id_site=="K"] <- 0)
+AIC <- within(AIC, rural[AIC$id_site=="U"] <- 0)
+table(AIC$id_site, AIC$rural, exclude = NULL)
+save(AIC, file=paste(Sys.Date(),"AICtrimmed.rda", sep="_"))
+```
+#Load AIC subset
+```{r}
+load("2020-09-29_AICtrimmed.rda")
+#save(AIC, file=paste(Sys.Date(),"AIC.rda", sep="_"))
+#AIC_back<-AIC
+```
+#Clean symptoms and create "all_symptoms" variable
+```{r}
+#table(AIC$symptoms , exclude = NULL) #All NA, empty column
+#table(AIC$symptoms_aic , exclude = NULL) #symptoms listed in this variable
+#table(AIC$oth_symptoms_aic, exclude = NULL) #free text symptoms
+#table(AIC$visit_type, exclude = NULL)
+#create binary symptom variable ------------------------------------------
+#subset symptoms with person_id, redcap_event_name as identifiers
+symptoms<-AIC[c("person_id", "redcap_event_name", "symptoms_aic", "oth_symptoms_aic")]
+#symptomsback<-symptoms
+#symptoms<-symptomsback
+if(!require(dplyr)){install.packages("dplyr")}
+#n_distinct(symptoms$symptoms_aic) #2481
+#n_distinct(symptoms$oth_symptoms_aic) #230, free text, first letter capitalized
+#combine symptoms from different variables into a single variable all_symptoms
+symptoms$all_symptoms<-NA
+symptoms$all_symptoms<-paste(symptoms$symptoms_aic, symptoms$oth_symptoms_aic, sep=" ")
+symptoms<-as.data.frame(symptoms)
+symptoms$all_symptoms<-tolower(symptoms$all_symptoms)
+#make everything lower case for ease of replacement of all the rest
+#n_distinct(symptoms$all_symptoms) #2666 different unique all_symptoms strings
+#clean up data in all_symptoms to correct for spelling
+#gsub replaces all so order of replace important: replacing "No" before "None" results in "ne"; 
+#will convert final binary variables to symptom_s to differentiate from physical_exam_p
+#table(symptoms$all_symptoms)
+#----------General symptoms-----sym_malaise
+symptoms$all_symptoms <- gsub('general body malaise', 'sym_malaise', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('general malaise', 'sym_malaise', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('sick_feeling', 'sym_malaise', symptoms$all_symptoms)
+#----------sym_coryza
+symptoms$all_symptoms <- gsub('flew', 'sym_coryza', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('flue', 'sym_coryza', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('flu,cold', 'sym_coryza', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub(',cold,flu', ' sym_coryza', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('flu', 'sym_coryza', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('sneezing', 'sym_coryza', symptoms$all_symptoms)
+#----------sym_irritable
+symptoms$all_symptoms <- gsub('irritable', 'sym_irritable', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('irritability', 'sym_irritable', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('restlessness', 'sym_irritable', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('restless', 'sym_irritable', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('occasional sturtling', 'sym_irritable', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('strutles', 'sym_irritable', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('sturtling', 'sym_irritable', symptoms$all_symptoms)
+#----------sym_lessactive
+symptoms$all_symptoms <- gsub('easy fatigue', 'sym_lessactive', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('refusal to play', 'sym_lessactive', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('sleeping alot', 'sym_lessactive', symptoms$all_symptoms)
+#----------sym_bodyache
+symptoms$all_symptoms <- gsub('general_body_ache', 'sym_bodyache', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('general body pains', 'sym_bodyache', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('body pains', 'sym_bodyache', symptoms$all_symptoms)
+#----------sym_anorexia
+symptoms$all_symptoms <- gsub('loss of appetite', 'sym_anorexia', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('loss_of_appetite', 'sym_anorexia', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('refusal to feed', 'sym_anorexia', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('lack of appetite', 'sym_anorexia', symptoms$all_symptoms)
+#----------sym_lethargic
+symptoms$all_symptoms <- gsub('lethergy', 'sym_lethargic', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('lethargy', 'sym_lethargic', symptoms$all_symptoms)
+#----------sym_fever
+symptoms$all_symptoms <- gsub('fever', 'sym_fever', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('hotness of the body', 'sym_fever', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('febrile', 'sym_fever', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('hob', 'sym_fever', symptoms$all_symptoms) #hot
+#----------sym_chills
+symptoms$all_symptoms <- gsub('chills', 'sym_chills', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('shivering', 'sym_chills', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('freezing', 'sym_chills', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('cold extremities', 'sym_chills', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('chiils', 'sym_chills', symptoms$all_symptoms)
+#----------sym_nightsweats
+symptoms$all_symptoms <- gsub('night sweat', 'sym_nightsweats', symptoms$all_symptoms)
+#----------sym_itchiness
+symptoms$all_symptoms <- gsub('itchiness', 'sym_itchiness', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('itchyness', 'sym_itchiness', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('skin itching', 'sym_itchiness', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('itching at the penile shaft', 'sym_itchiness', symptoms$all_symptoms)
+#----------sym_other
+symptoms$all_symptoms <- gsub('other', '', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('tinea corporis', 'sym_other', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('fungal skin infection', 'sym_other', symptoms$all_symptoms) #Tinea corporis
+symptoms$all_symptoms <- gsub('t.carpitis', 'sym_other', symptoms$all_symptoms)#Tinea capitis
+symptoms$all_symptoms <- gsub('wounds on the head', 'sym_other', symptoms$all_symptoms) #Tinea capitis
+symptoms$all_symptoms <- gsub('tooth ache', 'sym_other', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('toothache and swelling on the gum', 'sym_other', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('jaw pain', 'sym_other', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('chicken pox', 'sym_other', symptoms$all_symptoms)#specific diagnosis
+symptoms$all_symptoms <- gsub('ringworms', 'sym_other', symptoms$all_symptoms)#specific diagnosis
+symptoms$all_symptoms <- gsub('ringworm', 'sym_other', symptoms$all_symptoms)#specific diagnosis
+symptoms$all_symptoms <- gsub('worms in his stool', 'sym_other', symptoms$all_symptoms)#specific diagnosis
+symptoms$all_symptoms <- gsub('worms', 'sym_other', symptoms$all_symptoms)#specific diagnosis
+symptoms$all_symptoms <- gsub('schistomiasis', 'sym_other', symptoms$all_symptoms)#specific diagnosis
+symptoms$all_symptoms <- gsub('cravy for soil', 'sym_other', symptoms$all_symptoms)#category?
+symptoms$all_symptoms <- gsub('jiggers', 'sym_other', symptoms$all_symptoms) #chiggers
+symptoms$all_symptoms <- gsub('oral thrush', 'sym_other', symptoms$all_symptoms)#specific diagnosis
+symptoms$all_symptoms <- gsub('sprained wrist', 'sym_other', symptoms$all_symptoms)#specific diagnosis
+symptoms$all_symptoms <- gsub('mumps', 'sym_other', symptoms$all_symptoms)#specific diagnosis
+symptoms$all_symptoms <- gsub('sunisitis', 'sym_other', symptoms$all_symptoms)#specific diagnosis
+symptoms$all_symptoms <- gsub('neutrophilis', 'sym_other', symptoms$all_symptoms)#category?
+symptoms$all_symptoms <- gsub('nasal lacerations', 'sym_other', symptoms$all_symptoms)#trauma
+symptoms$all_symptoms <- gsub('dullness', 'sym_other', symptoms$all_symptoms)#category?
+#----------sym_headache
+symptoms$all_symptoms <- gsub('headache', 'sym_headache', symptoms$all_symptoms)
+#----------sym_dizziness
+symptoms$all_symptoms <- gsub('dizziness', 'sym_dizziness', symptoms$all_symptoms)
+#----------sym_alteredms
+symptoms$all_symptoms <- gsub('fainting', 'sym_alteredms', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('hallucination', 'sym_alteredms', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('impaired_mental_status', 'sym_alteredms', symptoms$all_symptoms)
+#----------sym_seizures
+symptoms$all_symptoms <- gsub('convulsions', 'sym_seizures', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('convulsion', 'sym_seizures', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('conversion', 'sym_seizures', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('fits', 'sym_seizures', symptoms$all_symptoms)
+#----------sym_photophobia
+symptoms$all_symptoms <- gsub('eyes_sensitive_to_light', 'sym_photophobia', symptoms$all_symptoms)
+#----------sym_neckstiffness
+symptoms$all_symptoms <- gsub('stiff_neck', 'sym_neckstiffness', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('stiff neck', 'sym_neckstiffness', symptoms$all_symptoms)
+#----------sym_dysgeusia
+symptoms$all_symptoms <- gsub('funny_taste', 'sym_dysgeusia', symptoms$all_symptoms)
+#----------sym_retroorbitalha
+symptoms$all_symptoms <- gsub('pain_behind_eyes', 'sym_retroorbitalha', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('eye pain', 'sym_retroorbitalha', symptoms$all_symptoms)
+#----------sym_redeyes
+symptoms$all_symptoms <- gsub('red_eyes', 'sym_redeyes', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('red eyes', 'sym_redeyes', symptoms$all_symptoms)
+#----------sym_itchy_eyes
+symptoms$all_symptoms <- gsub('longstanding itchy and painful eyes', 'sym_itchy_eyes', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('itchy eyes', 'sym_itchy_eyes', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('eye itching', 'sym_itchy_eyes', symptoms$all_symptoms)
+#----------sym_eyedischarge
+symptoms$all_symptoms <- gsub('watery eye discharge', 'sym_eyedischarge', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('whitish eye discharge', 'sym_eyedischarge', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('tearing eyes', 'sym_eyedischarge', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('eye. discharge', 'sym_eyedischarge', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('eye discharge', 'sym_eyedischarge', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('discharging eyes', 'sym_eyedischarge', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('eye infection', 'sym_eyedischarge', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('eye_discharge', 'sym_eyedischarge', symptoms$all_symptoms)
+#----------sym_rhinorrhea
+symptoms$all_symptoms <- gsub('runny_nose', 'sym_rhinorrhea', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('running nose', 'sym_rhinorrhea', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('runing nose', 'sym_rhinorrhea', symptoms$all_symptoms)
+#----------sym_otalgia
+symptoms$all_symptoms <- gsub('earache', 'sym_otalgia', symptoms$all_symptoms) 
+symptoms$all_symptoms <- gsub('ear pain', 'sym_otalgia', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub(',ear', ' sym_otalgia', symptoms$all_symptoms)
+#----------sym_eardc
+symptoms$all_symptoms <- gsub('pus ear discharge', 'sym_eardc', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('ear discharge', 'sym_eardc', symptoms$all_symptoms)
+#----------sym_pharyngitis
+symptoms$all_symptoms <- gsub('sore_throat', 'sym_pharyngitis', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('sore throats', 'sym_pharyngitis', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('sore throat', 'sym_pharyngitis', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('inflamed tonsils', 'sym_pharyngitis', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('pharyngititis', 'sym_pharyngitis', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('pain when swallowing', 'sym_pharyngitis', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('pain on swallowing', 'sym_pharyngitis', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('odinophagia', 'sym_pharyngitis', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('dysphagia', 'sym_pharyngitis', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('tonsillitis', 'sym_pharyngitis', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('tonsilitis', 'sym_pharyngitis', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('tonsolitis', 'sym_pharyngitis', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('throat', 'sym_pharyngitis', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('tonsils', 'sym_pharyngitis', symptoms$all_symptoms)
+#----------sym_mouth_odor
+symptoms$all_symptoms <- gsub('strong foul smell from the mouth', 'sym_mouth_odor', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('foul smell from the mouth', 'sym_mouth_odor', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('mouth odour', 'sym_mouth_odor', symptoms$all_symptoms)
+#----------sym_mouth_sores
+symptoms$all_symptoms <- gsub('ulceration on the tongue', 'sym_mouth_sores', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('wounds in the mouth', 'sym_mouth_sores', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('oral lesion', 'sym_mouth_sores', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('oral sores', 'sym_mouth_sores', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('oral sore', 'sym_mouth_sores', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('mouth sores', 'sym_mouth_sores', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('mouth sore', 'sym_mouth_sores', symptoms$all_symptoms)
+#----------sym_cough
+symptoms$all_symptoms <- gsub('chest cough', 'cof', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('cough', 'cof', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('cof', 'sym_cough', symptoms$all_symptoms)
+#----------sym_dyspnea
+symptoms$all_symptoms <- gsub('exertional dyspnea', 'sym_dyspnea', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('shortness_of_breath', 'sym_dyspnea', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('difficulty in breathing', 'sym_dyspnea', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('difficult in breathing', 'sym_dyspnea', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('hard breathing', 'sym_dyspnea', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('fast breathig', 'sym_dyspnea', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('fast breathing', 'sym_dyspnea', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('asthma', 'sym_dyspnea', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('wheezing', 'sym_dyspnea', symptoms$all_symptoms)
+#----------sym_chestpain
+symptoms$all_symptoms <- gsub('chestpain', 'sym_chestpain', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('chest pain', 'sym_chestpain', symptoms$all_symptoms)
+#----------sym_palpitations
+symptoms$all_symptoms <- gsub('fast paced heart beat', 'sym_palpitations', symptoms$all_symptoms)
+#----------sym_abpain
+symptoms$all_symptoms <- gsub("abdominal pain following injury 4/7 ago from a blunt object, child was hit and complains of pain", 'sym_abpain', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub("lower abdominal pains", 'sym_abpain', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub("lower abdominal pain", 'sym_abpain', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub("abdominal pain", 'sym_abpain', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub("epigastric pain", 'sym_abpain', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub("epigastric", 'sym_abpain', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub("epigastrin pain", 'sym_abpain', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub("epigastrin", 'sym_abpain', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub("epigast", 'sym_abpain', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub("stomachache", 'sym_abpain', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub("stomach", 'sym_abpain', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub("abdominal_pain", 'sym_abpain', symptoms$all_symptoms)
+#----------sym_abdistend
+symptoms$all_symptoms <- gsub("abdominal distension", 'sym_abdistend', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub("abdominal distention", 'sym_abdistend', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub("abdominal swelling", 'sym_abdistend', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub("spleenomegaly", 'sym_abdistend', symptoms$all_symptoms)
+#----------sym_nausea
+symptoms$all_symptoms <- gsub("nausea", 'sym_nausea', symptoms$all_symptoms)
+#----------sym_vomiting
+symptoms$all_symptoms <- gsub("vomiting", 'sym_vomiting', symptoms$all_symptoms)
+#----------sym_constipation
+symptoms$all_symptoms <- gsub('constipation', 'sym_constipation', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('hard stool', 'sym_constipation', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('failure to pass stool for 1 day', 'sym_constipation', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('failure to pass stool', 'sym_constipation', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('tenesmus', 'sym_constipation', symptoms$all_symptoms)
+#----------sym_diarrhea
+symptoms$all_symptoms <- gsub('diarrhea', 'sym_diarrhea', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('loose stool', 'sym_diarrhea', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('foul smelly stool', 'sym_diarrhea', symptoms$all_symptoms)
+#----------sym_rsh
+symptoms$all_symptoms <- gsub('rash in the head', 'sym_rsh', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('rashes on face', 'sym_rsh', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('post inflammation skin lesions', 'sym_rsh', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('skin blister', 'sym_rsh', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('septic rash', 'sym_rsh', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('skin rash', 'sym_rsh', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('sores on the neck', 'sym_rsh', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('sun rash', 'sym_rsh', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('rashes', 'sym_rsh', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('septic wounds on the toes', 'sym_rsh', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('boggy pus discharging swelling on buttock', 'sym_rsh', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('rash', 'sym_rsh', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('sores', 'sym_rsh', symptoms$all_symptoms)
+#----------sym_dysuria
+symptoms$all_symptoms <- gsub('dysuria', 'sym_dysuria', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('rti', 'sym_dysuria', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('uti', 'sym_dysuria', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('pain on urination', 'sym_dysuria', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('pain while passing urine', 'sym_dysuria', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('painful micturation', 'sym_dysuria', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('painful urination', 'sym_dysuria', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('frequency urination', 'sym_dysuria', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub("left frankpain", 'sym_dysuria', symptoms$all_symptoms)
+#----------sym_hematuria
+symptoms$all_symptoms <- gsub(" bloody_urine", 'sym_hematuria', symptoms$all_symptoms)
+#----------sym_jointpain
+symptoms$all_symptoms <- gsub('joint_pains', 'sym_jointpain', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('joint pains', 'sym_jointpain', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('hip pain', 'sym_jointpain', symptoms$all_symptoms)
+#----------sym_myalgia
+symptoms$all_symptoms <- gsub('muscle_pains', 'sym_myalgia', symptoms$all_symptoms)
+#----------sym_backache
+symptoms$all_symptoms <- gsub('back ache', 'sym_backache', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('lower back pains', 'sym_backache', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('back pain', 'sym_backache', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('neck pain', 'sym_backache', symptoms$all_symptoms)
+#----------sym_bonepain
+symptoms$all_symptoms <- gsub('bone_pains', 'sym_bonepain', symptoms$all_symptoms)
+#----------sym_pallor         
+symptoms$all_symptoms <- gsub('pallor,', 'sym_pallor ', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub("aneamia", 'sym_pallor', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub("looking pale", 'sym_pallor', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub("pale eyes", 'sym_pallor', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub("pale skin", 'sym_pallor', symptoms$all_symptoms)
+#----------sym_epistaxis
+symptoms$all_symptoms <- gsub('bloody_nose', 'sym_epistaxis', symptoms$all_symptoms)
+#----------sym_bloody_vomitstool
+symptoms$all_symptoms <- gsub('bloody_stool', 'sym_bloody_vomitstool', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('bloody_vomit', 'sym_bloody_vomitstool', symptoms$all_symptoms)
+#----------sym_bleeding_gums
+symptoms$all_symptoms <- gsub('bleeding_gums', 'sym_bleeding_gums', symptoms$all_symptoms)
+#----------sym_bruising
+symptoms$all_symptoms <- gsub('bruises inside the nose', 'sym_bruising', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('bruises', 'sym_bruising', symptoms$all_symptoms)
+#----------sym_jaundice
+symptoms$all_symptoms <- gsub('jaundice', 'sym_jaundice', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('yellowness of the eyes', 'sym_jaundice', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('yellow urine', 'sym_jaundice', symptoms$all_symptoms)
+#----------sym_swollen_nodes
+symptoms$all_symptoms <- gsub('cervical lymph nodes', 'sym_swollen_nodes', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('neckswelling', 'sym_swollen_nodes', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('swelling on the neck', 'sym_swollen_nodes', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('swollen inguinal lymhnodes', 'sym_swollen_nodes', symptoms$all_symptoms)
+#----------sym_facial_swelling
+symptoms$all_symptoms <- gsub('bilateral swelling of the chin', 'sym_facial_swelling', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('swollen face', 'sym_facial_swelling', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('swelling on the right chin', 'sym_facial_swelling', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('swollen cheeks', 'sym_facial_swelling', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('swollen eyes', 'sym_facial_swelling', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('puffiness of the face', 'sym_facial_swelling', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('puffy eyes', 'sym_facial_swelling', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('eye swelling', 'sym_facial_swelling', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('intraorbital swellin', 'sym_facial_swelling', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('infra auricular sweling', 'sym_facial_swelling', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('bilateral swelling of the chin', 'sym_facial_swelling', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('swelling below the left ear', 'sym_facial_swelling', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('swelling on the left ear', 'sym_facial_swelling', symptoms$all_symptoms)
+#----------sym_extremity_edema
+symptoms$all_symptoms <- gsub('boggy swelling of rt foot', 'sym_extremity_edema', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('swelling on the left thumb', 'sym_extremity_edema', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('swollen thumb', 'sym_extremity_edema', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('swelling on the right thigh', 'sym_extremity_edema', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('swelling on the rt gluteas muscle', 'sym_extremity_edema', symptoms$all_symptoms)
+#remove non-symptoms (meds)
+symptoms$all_symptoms <- gsub('piriton', '', symptoms$all_symptoms) #allergy med not symptom
+symptoms$all_symptoms <- gsub('amoxicillin', '', symptoms$all_symptoms) #med not symptom
+#------------------misc
+symptoms$all_symptoms <- gsub(',', ' ', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('sym_abpainsym_hematuria', 'sym_abpain sym_hematuria ', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('sym_diarrheasym_hematuria', 'sym_diarrhea sym_hematuria', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('sym_feversym_hematuria', 'sym_fever sym_hematuria', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('sym_mouth_sym_rsh', 'sym_mouthsores', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('sym_nauseasym_hematuria', 'sym_nausea sym_hematuria', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('sym_sym_bloody_vomitstoolstool', 'sym_bloody_vomitstool', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('sym_vomitingsym_hematuria', 'sym_vomiting sym_hematuria', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('nil', '', symptoms$all_symptoms) 
+symptoms$all_symptoms <- gsub('na', '', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('_usea', '_nausea', symptoms$all_symptoms) 
+symptoms$all_symptoms <- gsub('none', '', symptoms$all_symptoms) 
+symptoms$all_symptoms <- gsub('no', '', symptoms$all_symptoms)
+symptoms$all_symptoms <- gsub('_des', '_nodes', symptoms$all_symptoms) 
+symptoms$all_symptoms <- gsub('rhirrhea', 'rhinorrhea', symptoms$all_symptoms)
+#-------------interim check to see if there are other reassignments needed
+temppe<-symptoms$all_symptoms
+temppe<-as.data.frame(temppe)
+temppelev <- levels(factor(temppe$temppe))
+temppelev <- unique(unlist(strsplit(temppelev, " ")))
+tempresult <- matrix(data = "0", nrow = length(temppe$temppe), ncol = length(temppelev)) #matrix with individual symptoms as columns
+char.temppe <- as.character(temppe$temppe) #required for grep
+for (i in 1:length(temppelev)) {
+  tempresult[grep(temppelev[i], char.temppe, fixed = TRUE), i] <- "1"
+}
+tempresult <- data.frame(tempresult, stringsAsFactors = TRUE)
+colnames(tempresult) <- temppelev
+temppe <- cbind(temppe,tempresult)
+ls(temppe) #55 total
+#interval save
+save(symptoms, file=paste(Sys.Date(),"symptoms.rda", sep="_"))
+```
+#Merge all_symptoms variable back to main database
+```{r}
+AIC_sym<-merge(AIC, symptoms, by=c("person_id","redcap_event_name",  "symptoms_aic", "oth_symptoms_aic"))
+#check to see if all_symptoms merged back correctly to AIC
+temppe<-AIC_sym$all_symptoms
+temppe<-as.data.frame(temppe)
+temppelev <- levels(factor(temppe$temppe))
+temppelev <- unique(unlist(strsplit(temppelev, " ")))
+tempresult <- matrix(data = "0", nrow = length(temppe$temppe), ncol = length(temppelev)) #matrix with individual symptoms as columns
+char.temppe <- as.character(temppe$temppe) #required for grep
+for (i in 1:length(temppelev)) {
+  tempresult[grep(temppelev[i], char.temppe, fixed = TRUE), i] <- "1"
+}
+tempresult <- data.frame(tempresult, stringsAsFactors = TRUE)
+colnames(tempresult) <- temppelev
+temppe <- cbind(temppe,tempresult)
+ls(temppe) #55 total
+save(AIC_sym, file=paste(Sys.Date(),"AICsymp.rda", sep="_"))
+load("2020-06-12_AICsymp.rda")
+```
+#Clean PE variables and create "pe_all" variable
+```{r}
+#Gathered all available PE variables from data dictionary: 'temp', 'child_height_aic', 'child_weight_aic', 'head_circumference', 'heart_rate', 'resp_rate', 'bp_available', 'systolic_pressure', 'disastolic_pressure', 'pulse_ox', 'can_visual_acuity', 'visual_acuity_left', 'visual_acuity_right', 'head_neck_exam', 'clinician_notes_headneck', 'chest', 'clinician_notes_chest', 'heart', 'clinician_notes_heart', 'abdomen', 'location_abdomen_tenderness', 'clinician_notes_abdomen', 'nodes', 'oth_nodes', 'clinician_notes_nodes', 'joints', 'joint_location', 'clinician_notes_joints', 'skin', 'oth_skin', 'clinician_notes_skin', 'neuro', 'oth_neuro', 'clinician_notes_neuro', 'tourniquet_test'
+
+#subset pe with person_id, redcap_event_name, new "all_symptoms" variable as identifiers and variables that need to be cleaned
+pe<-AIC_sym[c("person_id", "redcap_event_name", "all_symptoms", "head_neck_exam", "clinician_notes_headneck", "chest", "clinician_notes_chest", "heart", "clinician_notes_heart", "abdomen", "location_abdomen_tenderness", "clinician_notes_abdomen", "nodes", "oth_nodes", "clinician_notes_nodes", "joints", "joint_location", "clinician_notes_joints", "skin", "oth_skin", "clinician_notes_skin", "neuro", "oth_neuro", "clinician_notes_neuro")]
+#Note: during process, discovered variables belonging to other systems, such as jaundice in heent. Need to rename to appropriate system
+
+```
+#-------------heent: "head_neck_exam", "clinician_notes_headneck"
+```{r}
+#table(pe$head_neck_exam, exclude = NULL) #check boxes
+#table(pe$clinician_notes_headneck, exclude = NULL) #all entries appear to be a single entry text string
+#replace spaces in text strings with _ in order to convert to factors
+pe$heent_textfactors<-NA
+pe$heent_textfactors <- gsub(' ', '_', pe$clinician_notes_headneck)
+#table(pe$heent_textfactors, exclude = NULL)
+pe$heent_all<-NA
+pe$heent_all<-paste(pe$head_neck_exam, pe$heent_textfactors, sep=" ")
+pe$heent_all<-tolower(pe$heent_all)
+#peheentall<-table(pe$heent_all)
+#write.table(peheentall, file = "temp.csv", sep = ",") #produces table of 162 unique pe strings
+#-------------p_heent_eye_disch
+pe$heent_all <- gsub('brownish_sclera_with_tearing', '', pe$heent_all) #redundant with eye_discharge
+pe$heent_all <- gsub('yellowish_in_colour', '', pe$heent_all) #modifier/redundant
+pe$heent_all <- gsub('whitish_discharge,_right_sided', '', pe$heent_all) #redundant
+pe$heent_all <- gsub('watery_eyes', '', pe$heent_all) #modifier/redundant
+pe$heent_all <- gsub('whitish_eye_discharge', '', pe$heent_all)  #modifier/redundant
+pe$heent_all <- gsub('whitish_discharge', '', pe$heent_all) #modifier/redundant 
+pe$heent_all <- gsub('whitish', '', pe$heent_all) #modifier
+pe$heent_all <- gsub('eye_discharge', 'p_heent_eye_disch', pe$heent_all)
+#-------------p_heent_face_swelling
+pe$heent_all <- gsub('puffy_eyes_noted', 'p_heent_face_swelling', pe$heent_all)
+pe$heent_all <- gsub('bilateral_infra_orbital_swelling', 'p_heent_face_swelling', pe$heent_all)
+pe$heent_all <- gsub('right_sided_tender_swelling_on_the_chin_and_', 'p_heent_face_swelling', pe$heent_all)
+#-------------p_heent_mouthsores
+pe$heent_all <- gsub('oral_sores', 'p_heent_mouthsores', pe$heent_all)
+pe$heent_all <- gsub(',_mouth_sores', ' p_heent_mouthsores', pe$heent_all)
+#-------------p_heent_thrush
+pe$heent_all <- gsub('has_oral_thrush', 'p_heent_thrush', pe$heent_all)
+pe$heent_all <- gsub('oral_thrush_noted_on_the_tongue', 'p_heent_thrush', pe$heent_all)
+#-------------p_heent_hx_chronic_dx including sickle cell, allergy
+pe$heent_all <- gsub('the_child_has_sickle_cell_anaemia', 'p_heent_hx_chronic_dx', pe$heent_all)
+pe$heent_all <- gsub('child_has_sickle_cell_disease', 'p_heent_hx_chronic_dx', pe$heent_all)
+pe$heent_all <- gsub('child_has_sickle_cell_anaemia', 'p_heent_hx_chronic_dx', pe$heent_all)
+pe$heent_all <- gsub('child_with_sickle_cell_anaemia,', 'p_heent_hx_chronic_dx ', pe$heent_all)
+pe$heent_all <- gsub('hydrocephalus', 'p_heent_hx_chronic_dx', pe$heent_all)
+pe$heent_all <- gsub('allergy', 'p_heent_hx_chronic_dx', pe$heent_all)
+pe$heent_all <- gsub('brown_conjunctiva_suggestive_of_allergic_conjuctivitis', 'p_heent_hx_chronic_dx', pe$heent_all)
+pe$heent_all <- gsub('brown_conjunctiva_suggestive_of_familial_allergic_conjuctivitis', 'p_heent_hx_chronic_dx', pe$heent_all)
+pe$heent_all <- gsub('familial_allergic_conjunctivitis.', 'p_heent_hx_chronic_dx', pe$heent_all)
+pe$heent_all <- gsub('hx_of_allergic_conjuctivitis', 'p_heent_hx_chronic_dx', pe$heent_all)
+pe$heent_all <- gsub('child_had_been_tested_for_sickle_cell_anaemia_which_turned_out_to_be_negative_but_has__had_history_of_allergic_conjunctivitis.', 'p_heent_hx_chronic_dx', pe$heent_all)
+pe$heent_all <- gsub('child_has_cataract_but_on_care_for_the_same', 'p_heent_hx_chronic_dx', pe$heent_all)
+pe$heent_all <- gsub('cataract_in_right_eye', 'p_heent_hx_chronic_dx', pe$heent_all)
+pe$heent_all <- gsub('child_has_had_recurrent_eye_problem,_infection', 'p_heent_hx_chronic_dx', pe$heent_all)
+pe$heent_all <- gsub('the_child_had_an_acute_respiratory_tract_infection_and_acute_atopic_conjunctivitis_that_is_resolving.', 'p_heent_hx_chronic_dx', pe$heent_all)
+#-------------p_heent_red_eyes
+pe$heent_all <- gsub('red_eyes', 'p_heent_red_eyes', pe$heent_all)
+#-------------p_heent_earfluid
+pe$heent_all <- gsub('middle_ear_fluid', 'p_heent_serousotitis', pe$heent_all)
+pe$heent_all <- gsub('hyperaemic_ear_drum_and_tender_pinna', 'p_heent_serousotitis', pe$heent_all)
+#-------------p_heent_nsl_drn_congest
+pe$heent_all <- gsub('nose_discharge', 'p_heent_nsl_drn_congest', pe$heent_all)
+pe$heent_all <- gsub('mucous', '', pe$heent_all) #modifier 
+pe$heent_all <- gsub('obvious_nasal_congestion', '', pe$heent_all) #redundant 
+pe$heent_all <- gsub('coryza_noted', '', pe$heent_all)#redundant 
+pe$heent_all <- gsub('coryza', '', pe$heent_all)#redundant 
+pe$heent_all <- gsub('common_cold', '', pe$heent_all)#redundant 
+pe$heent_all <- gsub('congested_nose_with_mouth_breathing', '', pe$heent_all)#redundant 
+pe$heent_all <- gsub('due_to_flu', '', pe$heent_all)#modifier
+pe$heent_all <- gsub('flu', '', pe$heent_all)#redundant
+pe$heent_all <- gsub('inflamed_nose', '', pe$heent_all)#redundant
+pe$heent_all <- gsub('with_bruise_on_the_rt_nosetril', '', pe$heent_all)#redundant
+#-------------p_derm_rash
+pe$heent_all <- gsub("rash_that's_concentrated_behind_the_left_ear,_papular_with_excoriation_noted", "p_derm_rash", pe$heent_all)
+pe$heent_all <- gsub("_rash_in_the_scalp._with_distinct_margins_suggestive_of_tinea", "p_derm_rash", pe$heent_all)
+pe$heent_all <- gsub("tinea_capitis_noted_on_the_scalp", "p_derm_other", pe$heent_all)
+pe$heent_all <- gsub("tinea_capitis_noted", "p_derm_other", pe$heent_all)
+pe$heent_all <- gsub("ringworm_on_the_head", "p_derm_other", pe$heent_all)
+pe$heent_all <- gsub("rash_near_the_mouth_with_pus", "p_derm_other", pe$heent_all)
+pe$heent_all <- gsub("pinna_crusted_lesions_noted", "p_derm_other", pe$heent_all)
+pe$heent_all <- gsub("generalised_tinea_carpitis_on_the_scalp", "p_derm_other", pe$heent_all)
+pe$heent_all <- gsub("times_capitis_noted_on_the_scalp", "p_derm_other", pe$heent_all)
+#-------------p_heent_pharyngitis
+pe$heent_all <- gsub('red_throat', 'p_heent_pharyngitis', pe$heent_all)
+pe$heent_all <- gsub('throat_exudate', 'p_heent_pharyngitis', pe$heent_all)
+pe$heent_all <- gsub('inflammed_tonsils', 'p_heent_pharyngitis', pe$heent_all)
+pe$heent_all <- gsub('mildly_reddened_throat', '', pe$heent_all)#redundant 
+pe$heent_all <- gsub('bilateral_hyperaemic_tonsillar_swelling', '', pe$heent_all)#redundant
+pe$heent_all <- gsub('p_heent_pharyngitis p_heent_pharyngitis', 'p_heent_pharyngitis', pe$heent_all)#redundant
+#-------------jaundice, rename as p_heme_jaundice
+pe$heent_all <- gsub('a_tinge_of_jaundice_with_impacted_wax_in_the_ear', 'p_heme_jaundice', pe$heent_all)
+pe$heent_all <- gsub('child_a_has_sickle_cell_anaemia_but_mild_jaundice', 'p_heme_jaundice', pe$heent_all)
+pe$heent_all <- gsub('patient_has_a_tinge_of_jaundice', 'p_heme_jaundice', pe$heent_all)
+pe$heent_all <- gsub('tinge_of_jaundice', 'p_heme_jaundice', pe$heent_all)
+pe$heent_all <- gsub('mild_jaundice', 'p_heme_jaundice', pe$heent_all)
+#-------------p_heme_icterus
+pe$heent_all <- gsub('icteric_sclerae mild', 'p_heme_icterus', pe$heent_all)
+pe$heent_all <- gsub('icteric_sclerae', 'p_heme_icterus', pe$heent_all)
+pe$heent_all <- gsub('scleral_icterus', 'p_heme_icterus', pe$heent_all)
+pe$heent_all <- gsub('tinge', '', pe$heent_all) #delete modifier for icteric_sclerae
+#-------------p_lymph_cerv_aden
+pe$heent_all <- gsub('large_lymph_nodes', 'p_lymph_cerv_aden', pe$heent_all)
+pe$heent_all <- gsub('right_non_tender_submandibular_node', 'p_lymph_cerv_aden', pe$heent_all)
+pe$heent_all <- gsub('rt_submundibular_lymphadenopathy', 'p_lymph_cerv_aden', pe$heent_all)
+pe$heent_all <- gsub('infra_auricular_swellings', 'p_lymph_cerv_aden', pe$heent_all)
+pe$heent_all <- gsub('cervical,mated_,painless_,bilateral', '', pe$heent_all) #modifier
+pe$heent_all <- gsub('__lymphnodes', '', pe$heent_all) #redundant 
+pe$heent_all <- gsub('rt_sided_cervical', '', pe$heent_all) #modifier
+pe$heent_all <- gsub('bilaterally_cervical_lymphnodes ', '', pe$heent_all) #redundant
+pe$heent_all <- gsub('bilateral_non_tender_submandibular_nodes', '', pe$heent_all) #modifier
+pe$heent_all <- gsub("left_submandibular_lymph_node_that's_non_tender", "", pe$heent_all) #modifier
+pe$heent_all <- gsub('left_infraauricular_lymphadenopathy', '', pe$heent_all) #modifier
+pe$heent_all <- gsub("right_side_sub_mandibular_node_that's_tender", "", pe$heent_all) #modifier
+pe$heent_all <- gsub('non_tender_submandibular_nodes', '', pe$heent_all) #modifier
+pe$heent_all <- gsub('right_infraauricula,_non-tender', '', pe$heent_all) #modifier
+pe$heent_all <- gsub('rt__sided_neck_swelling', '', pe$heent_all) #modifier
+pe$heent_all <- gsub('cervical', '', pe$heent_all) #modifier
+pe$heent_all <- gsub('bilaterally', '', pe$heent_all) #modifier
+pe$heent_all <- gsub('bilateral', '', pe$heent_all) #modifier
+pe$heent_all <- gsub('left_sided', '', pe$heent_all) #modifier 
+pe$heent_all <- gsub('rt_sided', '', pe$heent_all) #modifier 
+pe$heent_all <- gsub('rt_side', '', pe$heent_all) #modifier 
+#-------------p_heme_pallor
+pe$heent_all <- gsub('clinically_pale', 'p_heme_pallor', pe$heent_all)
+pe$heent_all <- gsub('very_pale', 'p_heme_pallor', pe$heent_all)
+pe$heent_all <- gsub('mild_cyanosis', 'p_heme_pallor', pe$heent_all)
+pe$heent_all <- gsub(',_pale', ' p_heme_pallor', pe$heent_all)
+pe$heent_all <- gsub('moderate_pallor__and_some_dehydration_noted', 'p_heme_pallor', pe$heent_all)
+pe$heent_all <- gsub('moderate_pallor_noted_and_some_dehydration', 'p_heme_pallor', pe$heent_all)
+pe$heent_all <- gsub('moderate_pallor_noted', 'p_heme_pallor', pe$heent_all)
+pe$heent_all <- gsub('mild_pallor_and_smooth_tongue_noted', 'p_heme_pallor', pe$heent_all)
+pe$heent_all <- gsub('mod_pallor_noted', 'p_heme_pallor', pe$heent_all)
+pe$heent_all <- gsub('mild_pallor_noted', 'p_heme_pallor', pe$heent_all)
+pe$heent_all <- gsub('mild_pallor', 'p_heme_pallor', pe$heent_all)
+pe$heent_all <- gsub('puffy_eyes_and_moderate_pallor ', '', pe$heent_all)#redundant entry
+pe$heent_all <- gsub('puffy_eyes_and_moderate_pallor', '', pe$heent_all)#redundant entry
+pe$heent_all <- gsub(' pallor', ' p_heme_pallor', pe$heent_all)
+#-------------p_heent_other
+pe$heent_all <- gsub('child_irritable_especially_when_seated_upright', 'p_ne_irritable', pe$heent_all)
+pe$heent_all <- gsub('sicklooking', 'p_ne_lethargic', pe$heent_all)
+#-------------p_heent_other
+pe$heent_all <- gsub('abnormal_growth_in_the_left_eye', 'p_heent_other', pe$heent_all)
+#-------------p_heent_stiffneck
+pe$heent_all <- gsub('stiff_neck', 'p_heent_stiffneck', pe$heent_all)
+#-------------p_heent_other
+pe$heent_all <- gsub('the_child_has_bn_coughing_previous_to_this,she_is_very_febrile', 'p_heent_other', pe$heent_all)
+pe$heent_all <- gsub('slightly_tender_neck_with_no_stiffness', 'p_heent_other', pe$heent_all)
+pe$heent_all <- gsub('sunken_eyes', 'p_heent_other', pe$heent_all)
+#-------------clean up "__lymphnodes", "none", "normal", "na", "no"
+pe$heent_all <- gsub('__lymphnodes', '', pe$heent_all)
+pe$heent_all <- gsub('normal', '', pe$heent_all)
+pe$heent_all <- gsub('none', '', pe$heent_all)
+pe$heent_all <- gsub('no', '', pe$heent_all)
+pe$heent_all <- gsub('na', '', pe$heent_all) 
+#-------------interim check to see if there are other reassignments needed
+temppe<-pe$heent_all
+temppe<-as.data.frame(temppe)
+temppelev <- levels(factor(temppe$temppe))
+temppelev <- unique(unlist(strsplit(temppelev, " ")))
+tempresult <- matrix(data = "0", nrow = length(temppe$temppe), ncol = length(temppelev)) #matrix with individual symptoms as columns
+char.temppe <- as.character(temppe$temppe) #required for grep
+for (i in 1:length(temppelev)) {
+  tempresult[grep(temppelev[i], char.temppe, fixed = TRUE), i] <- "1"
+}
+tempresult <- data.frame(tempresult, stringsAsFactors = TRUE)
+colnames(tempresult) <- temppelev
+temppe <- cbind(temppe,tempresult)
+ls(temppe) #19 total
+#interim backup
+peback<-pe
+```
+
+#-------------neuro exam: "neuro", "oth_neuro", "clinician_notes_neuro"
+```{r}
+#table(pe$neuro, exclude = NULL) #check boxes
+#table(pe$oth_neuro, exclude = NULL) #all no or NA, will exclude since no added data
+#table(pe$clinician_notes_neuro, exclude = NULL) #all entries appear to be a single entry text string
+#replace spaces in text strings with _ in order to convert to factors
+pe$neuro_textfactors<-NA
+pe$neuro_textfactors <- gsub(' ', '_', pe$clinician_notes_neuro)
+#table(pe$neuro_textfactors, exclude = NULL)
+pe$neuro_all<-NA
+pe$neuro_all<-paste(pe$neuro, pe$neuro_textfactors, sep=" ")
+pe$neuro_all<-tolower(pe$neuro_all)
+#peneuro_all<-table(pe$neuro_all)
+#write.table(peneuro_all, file = "temp.csv", sep = ",") #produces table of 162 unique pe strings
+#-------------p_ne_lethargic
+pe$neuro_all <- gsub('lethargic', 'p_ne_lethargic', pe$neuro_all)
+pe$neuro_all <- gsub('alert_time', 'p_ne_lethargic', pe$neuro_all)
+pe$neuro_all <- gsub('sick_looking', 'p_ne_lethargic', pe$neuro_all)
+pe$neuro_all <- gsub('prostrated', 'p_ne_lethargic', pe$neuro_all)
+#-------------p_ne_weakness
+pe$neuro_all <- gsub('decreased_strength', 'p_ne_weakness', pe$neuro_all)
+#-------------p_ne_gaitabnl
+pe$neuro_all <- gsub('abnormal_gait', 'p_ne_gaitabnl', pe$neuro_all)
+#-------------p_ne_ataxic
+pe$neuro_all <- gsub('ataxic', 'p_ne_ataxic', pe$neuro_all)
+#-------------p_ne_hyperreflexia
+pe$neuro_all <- gsub('increased_reflexes', 'p_ne_hyperreflexia', pe$neuro_all)
+#-------------p_ne_hyporeflexia
+pe$neuro_all <- gsub('decreased_reflexes', 'p_ne_hyporeflexia', pe$neuro_all)
+pe$neuro_all <- gsub('reflex_decreased_on_the_right_side_and_child_is_already_on_occupational_therapy', 'p_ne_hyporeflexia', pe$neuro_all)
+#-------------p_ne_pmhx
+pe$neuro_all <- gsub('disoriented._child_has_history_of_birth_complication_that_led_to_this_and_delayed_milestone.', 'p_ne_pmhx', pe$neuro_all)
+pe$neuro_all <- gsub('child_is_mentally_handicapped_following_neonatal_septicemia_/meningitis', 'p_ne_pmhx', pe$neuro_all)
+pe$neuro_all <- gsub('child_is_on_physiotherapy_for_joint_weakness_and_delayed_milestones', 'p_ne_pmhx', pe$neuro_all)
+pe$neuro_all <- gsub('child_has_hx_of_a_fall_on_the_right_side_of_his_body_with_severe_pain__and_swelling_on_the_right_ankle_and_foot,child_also_has_sickle_cell_anaemia', 'p_ne_pmhx p_heme_pmhx', pe$neuro_all)
+#-------------p_ne_irritable
+pe$neuro_all <- gsub('irritable', 'p_ne_irritable', pe$neuro_all)
+pe$neuro_all <- gsub('p_ne_irritable_but_oriented_to_time,place_and_person', 'p_ne_irritable', pe$neuro_all) #remove duplicate
+pe$neuro_all <- gsub('restless', 'p_ne_irritable', pe$neuro_all)
+#-------------p_ne_meningismus
+pe$neuro_all <- gsub('kernigs_sign_positive', 'p_ne_meningismus', pe$neuro_all)
+#-------------p_ne_postictal
+pe$neuro_all <- gsub('the_child_was_confirmed_to_be_epileptic_after_eeg', 'p_ne_postictal', pe$neuro_all)
+pe$neuro_all <- gsub('experienced_febrile_convulsion', 'p_ne_postictal', pe$neuro_all)
+#-------------clean up normal no na other
+pe$neuro_all <- gsub('normal', '', pe$neuro_all)
+pe$neuro_all <- gsub('other', '', pe$neuro_all)
+pe$neuro_all <- gsub('as_above', '', pe$neuro_all)
+pe$neuro_all <- gsub('na', '', pe$neuro_all) 
+pe$neuro_all <- gsub('no', '', pe$neuro_all) 
+#-------------interim check to see if there are other reassignments needed
+temppe<-pe$neuro_all
+temppe<-as.data.frame(temppe)
+temppelev <- levels(factor(temppe$temppe))
+temppelev <- unique(unlist(strsplit(temppelev, " ")))
+tempresult <- matrix(data = "0", nrow = length(temppe$temppe), ncol = length(temppelev)) #matrix with individual symptoms as columns
+char.temppe <- as.character(temppe$temppe) #required for grep
+for (i in 1:length(temppelev)) {
+  tempresult[grep(temppelev[i], char.temppe, fixed = TRUE), i] <- "1"
+}
+tempresult <- data.frame(tempresult, stringsAsFactors = TRUE)
+colnames(tempresult) <- temppelev
+temppe <- cbind(temppe,tempresult)
+ls(temppe) #11 total
+#interim backup
+peback<-pe
+```
+
+#-------------chest exam: chest", "clinician_notes_chest"
+```{r}
+#table(pe$chest, exclude = NULL) #check boxes
+#table(pe$clinician_notes_chest, exclude = NULL) #text string, need to keep together 
+#replace spaces in text strings with _ in order to convert to factors
+pe$chest_textfactors<-NA
+pe$chest_textfactors <- gsub(' ', '_', pe$clinician_notes_chest)
+#table(pe$chest_textfactors, exclude = NULL)
+pe$chest_all<-NA
+pe$chest_all<-paste(pe$chest, pe$chest_textfactors, sep=" ")
+pe$chest_all<-tolower(pe$chest_all)
+#pechest_all<-table(pe$chest_all)
+#write.table(pechest_all, file = "temp.csv", sep = ",") #produces table of 162 unique pe strings
+#-------------p_chest_dyspnea
+pe$chest_all <- gsub('grunting', 'p_chest_dyspnea', pe$chest_all)
+pe$chest_all <- gsub('retractions', 'p_chest_dyspnea', pe$chest_all)
+pe$chest_all <- gsub('flaring', 'p_chest_dyspnea', pe$chest_all)
+#-------------p_chest_tachypnea
+pe$chest_all <- gsub('rapid_breathing', 'p_chest_tachypnea', pe$chest_all)
+#-------------p_chest_ronchrale
+pe$chest_all <- gsub('rhonchi', 'p_chest_ronchrale', pe$chest_all)
+pe$chest_all <- gsub('rales', 'p_chest_ronchrale', pe$chest_all)
+pe$chest_all <- gsub('left-sided_crepitations', '', pe$chest_all)#modifier
+pe$chest_all <- gsub('basal_crepitus_bilaterally', 'p_chest_ronchrale', pe$chest_all)
+pe$chest_all <- gsub('bilateral_basal_crepitation_noted', 'p_chest_ronchrale', pe$chest_all)
+pe$chest_all <- gsub('bilateral_crepitus_noted', 'p_chest_ronchrale', pe$chest_all) 
+pe$chest_all <- gsub('bilateral_creptus_noted', 'p_chest_ronchrale', pe$chest_all)
+pe$chest_all <- gsub('has_reduced_breath_sounds_on_the_right', 'p_chest_ronchrale', pe$chest_all)
+pe$chest_all <- gsub('left_lung_lobe', '', pe$chest_all)#modifier
+pe$chest_all <- gsub('rt_lung_lobe', '', pe$chest_all)#modifier
+pe$chest_all <- gsub('rt_lung_lobe', '', pe$chest_all)#modifier 
+#-------------p_chest_wheezes
+pe$chest_all <- gsub('wheezes', 'p_chest_wheezes', pe$chest_all)
+#-------------p_chest_hx_asthma
+pe$chest_all <- gsub('child_is_also_a_known_asthmatic', 'p_chest_hx_asthma', pe$chest_all)
+pe$chest_all <- gsub('is_a_known_asthmatic_project', 'p_chest_hx_asthma', pe$chest_all)
+#-------------p_chest_other
+pe$chest_all <- gsub('tender_on_palpation', 'p_chest_other', pe$chest_all)
+#-------------p_misc_pmhx
+pe$chest_all <- gsub('child_has_an_umbilical_hernia', 'p_misc_pmhx', pe$chest_all)
+pe$chest_all <- gsub('rashes_on_face', 'p_derm_rash_face', pe$chest_all)
+pe$chest_all <- gsub('pleuritic_rash', 'p_derm_rash_torso', pe$chest_all)
+pe$chest_all <- gsub('coryza_noted', 'p_heent_nsl_drn_congest', pe$chest_all)
+#-------------clean up normal no na other
+pe$chest_all <- gsub('not_normal', '', pe$chest_all)
+pe$chest_all <- gsub('normal', '', pe$chest_all)
+pe$chest_all <- gsub('na', '', pe$chest_all) 
+pe$chest_all <- gsub('no', '', pe$chest_all) 
+pe$chest_all <- gsub('yes', '', pe$chest_all) 
+
+#-------------interim check to see if there are other reassignments needed
+temppe<-pe$chest_all
+temppe<-as.data.frame(temppe)
+temppelev <- levels(factor(temppe$temppe))
+temppelev <- unique(unlist(strsplit(temppelev, " ")))
+tempresult <- matrix(data = "0", nrow = length(temppe$temppe), ncol = length(temppelev)) #matrix with individual symptoms as columns
+char.temppe <- as.character(temppe$temppe) #required for grep
+for (i in 1:length(temppelev)) {
+  tempresult[grep(temppelev[i], char.temppe, fixed = TRUE), i] <- "1"
+}
+tempresult <- data.frame(tempresult, stringsAsFactors = TRUE)
+colnames(tempresult) <- temppelev
+temppe <- cbind(temppe,tempresult)
+ls(temppe) #10 total
+#interim backup
+peback<-pe
+#pe<-peback
+```
+
+#-------------cardiac exam: "heart", "clinician_notes_heart"
+```{r}
+#table(pe$heart, exclude = NULL) #check boxes
+#table(pe$clinician_notes_heart, exclude = NULL) #text string, need to keep together 
+#replace spaces in text strings with _ in order to convert to factors
+pe$card_textfactors<-NA
+pe$card_textfactors <- gsub(' ', '_', pe$clinician_notes_heart)
+#table(pe$card_textfactors, exclude = NULL)
+pe$card_all<-NA
+pe$card_all<-paste(pe$heart, pe$card_textfactors, sep=" ")
+pe$card_all<-tolower(pe$card_all)
+#pecard_all<-table(pe$card_all)
+#write.table(pecard_all, file = "temp.csv", sep = ",") #produces table of 162 unique pe strings
+#-------------remove normal
+pe$card_all <- gsub('brisk_capillary_refill', '', pe$card_all)
+#-------------p_card_delayedcaprefill
+pe$card_all <- gsub('delayed_capillary_refill', 'p_card_delayedcaprefill', pe$card_all)
+#-------------p_card_tachy
+pe$card_all <- gsub('rapid_rate', 'p_card_tachy', pe$card_all)
+pe$card_all <- gsub('fast_heart_rate', 'p_card_tachy', pe$card_all)
+pe$card_all <- gsub('gallop', 'p_card_tachy', pe$card_all)
+pe$card_all <- gsub('tachycardia', 'p_card_tachy', pe$card_all) 
+#-------------p_card_murmur
+pe$card_all <- gsub('systolic_murmur_at_the_pulmonary_artery_area', '', pe$card_all)#redundant
+pe$card_all <- gsub('systolic_murmur_at_the_mitral_valve_area', '', pe$card_all)#redundant
+pe$card_all <- gsub('murmur', 'p_card_murmur', pe$card_all)
+#-------------other
+pe$card_all <- gsub('edema_lower_extremities', 'p_lymph_edema_LE', pe$card_all)
+#-------------clean up normal no na other
+pe$card_all <- gsub('none', '', pe$card_all)
+pe$card_all <- gsub('normal', '', pe$card_all)
+pe$card_all <- gsub('na', '', pe$card_all) 
+pe$card_all <- gsub('no', '', pe$card_all) 
+pe$card_all <- gsub('yes', '', pe$card_all) 
+
+#-------------interim check to see if there are other reassignments needed
+temppe<-pe$card_all
+temppe<-as.data.frame(temppe)
+temppelev <- levels(factor(temppe$temppe))
+temppelev <- unique(unlist(strsplit(temppelev, " ")))
+tempresult <- matrix(data = "0", nrow = length(temppe$temppe), ncol = length(temppelev)) #matrix with individual symptoms as columns
+char.temppe <- as.character(temppe$temppe) #required for grep
+for (i in 1:length(temppelev)) {
+  tempresult[grep(temppelev[i], char.temppe, fixed = TRUE), i] <- "1"
+}
+tempresult <- data.frame(tempresult, stringsAsFactors = TRUE)
+colnames(tempresult) <- temppelev
+temppe <- cbind(temppe,tempresult)
+ls(temppe) #4 total
+#interim backup
+peback<-pe
+```
+
+#Abdomen "abdomen", "location_abdomen_tenderness", "clinician_notes_abdomen"
+```{r}
+#table(pe$abdomen, exclude = NULL) #check boxes
+#table(pe$location_abdomen_tenderness, exclude = NULL) #descriptors for abd pain
+#table(pe$clinician_notes_abdomen, exclude = NULL) #text string, need to keep together
+#replace spaces in text strings with _ in order to convert to factors
+pe$abd_textfactors<-NA
+pe$abd_textfactors <- gsub(' ', '_', pe$clinician_notes_abdomen)
+#table(pe$abd_textfactors, exclude = NULL)
+pe$abd_all<-NA
+pe$abd_all<-paste(pe$abdomen, pe$location_abdomen_tenderness, pe$abd_textfactors, sep=" ")
+pe$abd_all<-tolower(pe$abd_all)
+peabd_all<-table(pe$abd_all)
+write.table(peabd_all, file = "temp.csv", sep = ",") #produces table of 64 unique pe strings
+#-------------p_abd_bs_absent
+pe$abd_all <- gsub('absent_bowel_sounds', 'p_abd_bs_absent', pe$abd_all)
+#-------------p_abd_bs_hyper
+pe$abd_all <- gsub('hyperactive_bowel_sounds', 'p_abd_bs_hyper', pe$abd_all)
+#-------------p_abd_distended
+pe$abd_all <- gsub('distended,_non_tender_and_soft', 'p_abd_distended', pe$abd_all)
+pe$abd_all <- gsub('abdominal_extension', 'p_abd_distended', pe$abd_all)
+pe$abd_all <- gsub('abdominal_distention', 'p_abd_distended', pe$abd_all)
+#-------------p_abd_hepatomegaly
+pe$abd_all <- gsub('hepatomegaly', 'p_abd_hepatomegaly', pe$abd_all)
+#-------------p_abd_splenomegaly
+pe$abd_all <- gsub('non_tender_splenomegaly_about_4cm_subcoastal', '', pe$abd_all)#descriptor
+pe$abd_all <- gsub('scaphoid_abdomen,_with_non_tender_splenomegaly_of_4_cm', '', pe$abd_all)#redundant
+pe$abd_all <- gsub('1cm_below_costal_margin', '', pe$abd_all)#descriptor
+pe$abd_all <- gsub('enlarged_spleen', '', pe$abd_all)#redundant
+pe$abd_all <- gsub('spleen-3cm', '', pe$abd_all)#descriptor
+pe$abd_all <- gsub('tipped_spleen', '', pe$abd_all)#descriptor
+pe$abd_all <- gsub('splenomegaly', 'p_abd_splenomegaly', pe$abd_all)
+#-------------p_abd_other
+pe$abd_all <- gsub('umbilical_hernia', 'p_abd_other', pe$abd_all)
+pe$abd_all <- gsub('some_dehydration', 'p_abd_other', pe$abd_all)
+#-------------p_abd_ttp_any
+pe$abd_all <- gsub('tenderness_to_palpation', 'p_abd_ttp_any', pe$abd_all)
+#-------------p_abd_ttp_diffuse
+pe$abd_all <- gsub('ruq luq llq rlq epigastrium superpubic gereralisedk', 'p_abd_ttp_diffuse', pe$abd_all)
+pe$abd_all <- gsub('ruq luq llq rlq epigastrium superpubic generalized', 'p_abd_ttp_diffuse', pe$abd_all)
+pe$abd_all <- gsub('ruq luq llq rlq epigastrium superpubic', 'p_abd_ttp_diffuse', pe$abd_all)
+pe$abd_all <- gsub('ruq luq llq rlq superpubic generalised_tender_,_sent_for_u.sound_of_abdomen', 'p_abd_ttp_diffuse', pe$abd_all)
+pe$abd_all <- gsub('ruq luq epigastrium no_masses_found_on_examination', 'p_abd_ttp_diffuse', pe$abd_all)
+pe$abd_all <- gsub('ruq luq llq rlq', 'p_abd_ttp_diffuse', pe$abd_all)
+pe$abd_all <- gsub('ruq luq llq rlq superpubic', 'p_abd_ttp_diffuse', pe$abd_all)
+pe$abd_all <- gsub('has_abdominal_pain_without_diarrhoea', 'p_abd_ttp_diffuse', pe$abd_all)
+pe$abd_all <- gsub('ruq luq epigastrium', 'p_abd_ttp_diffuse', pe$abd_all)
+#-------------p_abd_ttp_epigastric
+pe$abd_all <- gsub('epigastrium epigastric_region', 'p_abd_ttp_epigastric', pe$abd_all)
+pe$abd_all <- gsub('epigastrium epigastric', 'p_abd_ttp_epigastric', pe$abd_all)
+pe$abd_all <- gsub('luq epigastrium', 'p_abd_ttp_epigastric', pe$abd_all)
+pe$abd_all <- gsub('epigastrium gastritis', 'p_abd_ttp_epigastric', pe$abd_all)
+pe$abd_all <- gsub('epigastrium', 'p_abd_ttp_epigastric', pe$abd_all)
+#-------------p_abd_ttp_right
+pe$abd_all <- gsub('rlq rlq', 'p_abd_ttp_right', pe$abd_all)
+pe$abd_all <- gsub('rlq', 'p_abd_ttp_right', pe$abd_all)
+pe$abd_all <- gsub('ruq no_masses_felt', 'p_abd_ttp_right', pe$abd_all)
+pe$abd_all <- gsub('ruq tender_on_palpation', 'p_abd_ttp_right', pe$abd_all)
+pe$abd_all <- gsub('ruq mild_tenderness', 'p_abd_ttp_right', pe$abd_all)
+pe$abd_all <- gsub('ruq', 'p_abd_ttp_right', pe$abd_all)
+#-------------p_abd_ttp_left
+pe$abd_all <- gsub('luq  mild_tenderness,_no_palpable_masses', 'p_abd_ttp_left', pe$abd_all)
+pe$abd_all <- gsub('luq llq', 'p_abd_ttp_left', pe$abd_all)
+pe$abd_all <- gsub('llq', 'p_abd_ttp_left', pe$abd_all)
+pe$abd_all <- gsub('luq', 'p_abd_ttp_left', pe$abd_all)
+#-------------p_abd_ttp_lower
+pe$abd_all <- gsub('superpubic slightly_tenderness_but_no_mass_felt', 'p_abd_ttp_lower', pe$abd_all)
+pe$abd_all <- gsub('superpubic mild_tenderness,_no_palpable_masses', '', pe$abd_all)
+pe$abd_all <- gsub('superpubic', 'p_abd_ttp_lower', pe$abd_all)
+
+pe$abd_all <- gsub('mild', '', pe$abd_all)
+pe$abd_all <- gsub('slight', '', pe$abd_all)
+pe$abd_all <- gsub('lumbar-iliac_region', 'p_muskl_back', pe$abd_all)
+#-------------clean up normal no na other
+pe$abd_all <- gsub('none', '', pe$abd_all)
+pe$abd_all <- gsub('normal', '', pe$abd_all)
+pe$abd_all <- gsub('na', '', pe$abd_all) 
+pe$abd_all <- gsub('no', '', pe$abd_all) 
+
+
+#-------------interim check to see if there are other reassignments needed
+temppe<-pe$abd_all
+temppe<-as.data.frame(temppe)
+temppelev <- levels(factor(temppe$temppe))
+temppelev <- unique(unlist(strsplit(temppelev, " ")))
+tempresult <- matrix(data = "0", nrow = length(temppe$temppe), ncol = length(temppelev)) #matrix with individual symptoms as columns
+char.temppe <- as.character(temppe$temppe) #required for grep
+for (i in 1:length(temppelev)) {
+  tempresult[grep(temppelev[i], char.temppe, fixed = TRUE), i] <- "1"
+}
+tempresult <- data.frame(tempresult, stringsAsFactors = TRUE)
+colnames(tempresult) <- temppelev
+temppe <- cbind(temppe,tempresult)
+ls(temppe) #13 total
+#interim backup
+peback<-pe
+```
+
+#"nodes", "oth_nodes", "clinician_notes_nodes"
+```{r}
+#table(pe$nodes, exclude = NULL) #check boxes
+#table(pe$oth_nodes, exclude = NULL) #text string, need to keep together
+#table(pe$clinician_notes_nodes, exclude = NULL) #text string, need to keep together
+#replace spaces in text strings with _ in order to convert to factors
+pe$nodes_textfactors1<-NA
+pe$nodes_textfactors1 <- gsub(' ', '_', pe$clinician_notes_nodes)
+pe$nodes_textfactors2<-NA
+pe$nodes_textfactors2 <- gsub(' ', '_', pe$oth_nodes)
+pe$nodes_all<-NA
+pe$nodes_all<-paste(pe$nodes, pe$nodes_textfactors1, pe$nodes_textfactors2, sep=" ")
+pe$nodes_all<-tolower(pe$nodes_all)
+#penodes_all<-table(pe$nodes_all)
+#write.table(penodes_all, file = "temp.csv", sep = ",") #produces table of 64 unique pe strings
+#-------------delete normals
+pe$nodes_all <- gsub('not_enlarged', '', pe$nodes_all)
+pe$nodes_all <- gsub('not enlarged', '', pe$nodes_all)
+pe$nodes_all <- gsub('normal', '', pe$nodes_all)
+pe$nodes_all <- gsub('_noted', '', pe$nodes_all)
+#-------------p_lymph_cerv_aden
+pe$nodes_all <- gsub('submandibular_node', 'p_lymph_cerv_aden', pe$nodes_all)
+pe$nodes_all <- gsub('sub_mandibular_node', 'p_lymph_cerv_aden', pe$nodes_all)
+pe$nodes_all <- gsub('submandibular_lymphadenopathy', 'p_lymph_cerv_aden', pe$nodes_all)
+pe$nodes_all <- gsub('cervial', 'p_lymph_cerv_aden', pe$nodes_all)
+pe$nodes_all <- gsub('submandibular_lymph_node', 'p_lymph_cerv_aden', pe$nodes_all)
+pe$nodes_all <- gsub('enlarged_tonsiller_nodes', 'p_lymph_cerv_aden', pe$nodes_all)
+pe$nodes_all <- gsub('sub_mandibular_lymphadenopathy', 'p_lymph_cerv_aden', pe$nodes_all)
+pe$nodes_all <- gsub('submandibular_lymphoid_left', 'p_lymph_cerv_aden', pe$nodes_all)
+pe$nodes_all <- gsub('tonsilar_lymphadenopathy ', 'p_lymph_cerv_aden', pe$nodes_all)
+pe$nodes_all <- gsub('submandibular', 'p_lymph_cerv_aden', pe$nodes_all)
+pe$nodes_all <- gsub('sublingual_lymphadenopathy', 'p_lymph_cerv_aden', pe$nodes_all)
+pe$nodes_all <- gsub('firm_tender_left_infraauricular__lymphadenopathy', 'p_lymph_cerv_aden', pe$nodes_all)
+pe$nodes_all <- gsub('left_post_auricular_lymphadenopathy', 'p_lymph_cerv_aden', pe$nodes_all)
+pe$nodes_all <- gsub('sub_mandibular_and', 'p_lymph_cerv_aden', pe$nodes_all)
+#-------------p_lymph_axil_aden
+pe$nodes_all <- gsub('axillary lymphadenopathy', 'p_lymph_axil_aden', pe$nodes_all)
+pe$nodes_all <- gsub('axillary', 'p_lymph_axil_aden', pe$nodes_all)
+#-------------p_lymph_inguin_aden
+pe$nodes_all <- gsub('tender_bilateral_inguinal_lymphadenopathy', 'p_lymph_inguin_aden', pe$nodes_all)
+pe$nodes_all <- gsub('_inguinal_lymhadenopathy', ' p_lymph_inguin_aden', pe$nodes_all)
+pe$nodes_all <- gsub('inguinal', 'p_lymph_inguin_aden', pe$nodes_all)
+#-------------clean up descriptors
+pe$nodes_all <- gsub("_that's", '', pe$nodes_all)
+pe$nodes_all <- gsub('_non_tender', '', pe$nodes_all)
+pe$nodes_all <- gsub('non_tender_', '', pe$nodes_all)
+pe$nodes_all <- gsub('unilateral_', '', pe$nodes_all)
+pe$nodes_all <- gsub('_left', '', pe$nodes_all)
+pe$nodes_all <- gsub('left_', '', pe$nodes_all)
+pe$nodes_all <- gsub('_right', '', pe$nodes_all)
+pe$nodes_all <- gsub('right_', '', pe$nodes_all)
+pe$nodes_all <- gsub('bilateral_moderate_enlargement', '', pe$nodes_all)
+pe$nodes_all <- gsub('bilateral_non_tender_lymph_node', '', pe$nodes_all)
+pe$nodes_all <- gsub('adens', 'aden', pe$nodes_all)
+pe$nodes_all <- gsub('bilateral_non_tender_', '', pe$nodes_all)
+pe$nodes_all <- gsub('bilateral_non_tender', '', pe$nodes_all)
+pe$nodes_all <- gsub('bilateral_', '', pe$nodes_all)
+pe$nodes_all <- gsub('bilateral', '', pe$nodes_all)
+pe$nodes_all <- gsub('mated,_painless_,', 'p_lymph_cerv_aden', pe$nodes_all)
+pe$nodes_all <- gsub('_tender', '', pe$nodes_all)
+pe$nodes_all <- gsub('_ly_', '', pe$nodes_all)
+pe$nodes_all <- gsub('enlargment', '', pe$nodes_all)
+pe$nodes_all <- gsub('enlargement', '', pe$nodes_all)
+pe$nodes_all <- gsub('moderately_enlarged', '', pe$nodes_all)
+pe$nodes_all <- gsub('enlarged', '', pe$nodes_all)
+pe$nodes_all <- gsub('mild_lymphadenopathy', '', pe$nodes_all)
+pe$nodes_all <- gsub('large', '', pe$nodes_all)
+pe$nodes_all <- gsub('non_ly', '', pe$nodes_all)
+pe$nodes_all <- gsub('aden_ly', 'aden', pe$nodes_all)
+pe$nodes_all <- gsub('non_', '', pe$nodes_all)
+pe$nodes_all <- gsub('and', '', pe$nodes_all)
+pe$nodes_all <- gsub('_on_the', '', pe$nodes_all)
+pe$nodes_all <- gsub('that_are', '', pe$nodes_all)
+pe$nodes_all <- gsub('swollen_', '', pe$nodes_all)
+pe$nodes_all <- gsub('sided_node', '', pe$nodes_all)
+pe$nodes_all <- gsub('sided', '', pe$nodes_all)
+pe$nodes_all <- gsub('side', '', pe$nodes_all)
+pe$nodes_all <- gsub('right', '', pe$nodes_all)
+pe$nodes_all <- gsub('left_non_tender_', '', pe$nodes_all)
+pe$nodes_all <- gsub('left_sided', '', pe$nodes_all)
+#-------------clean up normal no na other
+pe$nodes_all <- gsub('none', '', pe$nodes_all)
+pe$nodes_all <- gsub('normal', '', pe$nodes_all)
+pe$nodes_all <- gsub('na', '', pe$nodes_all) 
+pe$nodes_all <- gsub('no', '', pe$nodes_all) 
+pe$nodes_all <- gsub('other', '', pe$nodes_all) 
+pe$nodes_all <- gsub('lymph_de', '', pe$nodes_all) 
+pe$nodes_all <- gsub('ly', '', pe$nodes_all)
+pe$nodes_all <- gsub('mph', 'lymph', pe$nodes_all) 
+#-------------#temporary backup
+pe$temp <- NA
+pe$temp <- pe$nodes_all #temporary backup
+pe$nodes_all <- pe$temp
+#-------------interim check to see if there are other reassignments needed
+temppe<-pe$nodes_all
+temppe<-as.data.frame(temppe)
+temppelev <- levels(factor(temppe$temppe))
+temppelev <- unique(unlist(strsplit(temppelev, " ")))
+tempresult <- matrix(data = "0", nrow = length(temppe$temppe), ncol = length(temppelev)) #matrix with individual symptoms as columns
+char.temppe <- as.character(temppe$temppe) #required for grep
+for (i in 1:length(temppelev)) {
+  tempresult[grep(temppelev[i], char.temppe, fixed = TRUE), i] <- "1"
+}
+tempresult <- data.frame(tempresult, stringsAsFactors = TRUE)
+colnames(tempresult) <- temppelev
+temppe <- cbind(temppe,tempresult)
+ls(temppe) #3 total
+#interim backup
+peback<-pe
+#, , , "nodes", "oth_nodes", "clinician_notes_nodes", "joints", "joint_location", "clinician_notes_joints", "skin", "oth_skin", "clinician_notes_skin"
+```
+
+#"joints", "joint_location", "clinician_notes_joints"
+```{r}
+#table(pe$joints, exclude = NULL) #standardized choices
+#table(pe$joint_location, exclude = NULL) #standardized choices
+#table(pe$clinician_notes_joints, exclude = NULL) #text string, need to keep together
+#replace spaces in text strings with . in order to convert to factors
+pe$joints_textfactors<-NA
+pe$joints_textfactors <- gsub(' ', '.', pe$clinician_notes_joints)
+pe$joints_all<-NA
+pe$joints_all<-paste(pe$joints, pe$joints_textfactors, sep=" ") #will add location after 1st round clean up
+pe$joints_all<-tolower(pe$joints_all)
+#pejoints_all<-table(pe$joints_all)
+#write.table(pejoints_all, file = "temp.csv", sep = ",") #produces table of 64 unique pe strings
+#-------------clean up: This section is different. Joint location is described with normal so need to differentiate betweeen abnormal and normal joints. Abnormal descriptors are 'warm' 'tender' 'swollen' 'red'
+pe$joints_abnl <- NA
+pe$joints_abnl <- ifelse(grepl("warm", pe$joints_all), 1,
+                  ifelse(grepl("tender", pe$joints_all), 1,
+                  ifelse(grepl("swollen", pe$joints_all), 1,
+                  ifelse(grepl("red", pe$joints_all), 1,
+                  ifelse(grepl("oedema", pe$joints_all), 1,
+                  ifelse(grepl("pain", pe$joints_all), 1, 0))))))
+temptable<-table(pe$joints_all, pe$joints_abnl, exclude = NULL)
+write.table(temptable, file = "temp.csv", sep = ",")
+#subset of only findings for those with abnormal joints
+pe$joints_abnl_only <- NA
+pe$joints_abnl_only[which(pe$joints_abnl==1)] <- pe$joints_all[which(pe$joints_abnl==1)]
+#-------------p_muskl_x
+pe$joints_abnl_only <- gsub('back.pain', 'p_muskl_back', pe$joints_abnl_only)
+pe$joints_abnl_only <- gsub('complains.of.joint.pain', 'sym_jointpain', pe$joints_abnl_only) #symptom
+pe$joints_abnl_only <- gsub('generallised.joint.pains', 'sym_jointpain', pe$joints_abnl_only) #symptom
+pe$joints_abnl_only <- gsub('intercostal', 'p_muskl_chest', pe$joints_abnl_only)
+pe$joints_abnl_only <- gsub('moderate.tenderness', 'p_muskl_jtend', pe$joints_abnl_only) 
+pe$joints_abnl_only <- gsub('painful.joints', 'p_muskl_jtend', pe$joints_abnl_only) 
+pe$joints_abnl_only <- gsub('pronounced.tenderness.of.the.knee.joints', 'p_muskl_jtend', pe$joints_abnl_only) 
+pe$joints_abnl_only <- gsub('tender', 'p_muskl_jtend', pe$joints_abnl_only)
+pe$joints_abnl_only <- gsub('red', 'p_muskl_jred', pe$joints_abnl_only) 
+pe$joints_abnl_only <- gsub('swollen', 'p_muskl_jred', pe$joints_abnl_only) 
+pe$joints_abnl_only <- gsub('warm', 'p_muskl_jwrmth', pe$joints_abnl_only) 
+pe$joints_abnl_only <- gsub('there.is.joint.weakness,.the.child.unable.to.stand.without.support', 'p_muskl_weakness', pe$joints_abnl_only) 
+pe$joints_abnl_only <- gsub('there.is.history.of.a.fall.on.the.affected.elbow,1/12.ago,.with.history.of.difficulty.in.flexion', 'p_muskl_trauma', pe$joints_abnl_only) 
+pe$joints_abnl_only <- gsub('child.has.oedema.and.fingerclubbing', 'p_lymph_edema p_chest_other', pe$joints_abnl_only) 
+pe$joints_abnl_only <- gsub('na', '', pe$joints_abnl_only)
+pe$joints_abnl_only <- gsub('normal', '', pe$joints_abnl_only)
+#-------------interim check to see if there are other reassignments needed
+temppe<-pe$joints_abnl_only
+temppe<-as.data.frame(temppe)
+temppelev <- levels(factor(temppe$temppe))
+temppelev <- unique(unlist(strsplit(temppelev, " ")))
+tempresult <- matrix(data = "0", nrow = length(temppe$temppe), ncol = length(temppelev)) #matrix with individual symptoms as columns
+char.temppe <- as.character(temppe$temppe) #required for grep
+for (i in 1:length(temppelev)) {
+  tempresult[grep(temppelev[i], char.temppe, fixed = TRUE), i] <- "1"
+}
+tempresult <- data.frame(tempresult, stringsAsFactors = TRUE)
+colnames(tempresult) <- temppelev
+temppe <- cbind(temppe,tempresult)
+ls(temppe) #10 total
+#interim backup
+peback<-pe
+```
+#----------------------derm
+```{r}
+#"skin", "oth_skin", "clinician_notes_skin"
+#table(pe$skin, exclude = NULL) #standardized choices
+#table(pe$oth_skin, exclude = NULL) #text string, need to keep together
+#table(pe$clinician_notes_skin, exclude = NULL) #text string, need to keep together
+#replace spaces in text strings with . in order to convert to factors
+pe$derm_textfactors1<-NA
+pe$derm_textfactors1 <- gsub(' ', '', pe$oth_skin)
+pe$derm_textfactors2<-NA
+pe$derm_textfactors2 <- gsub(' ', '', pe$clinician_notes_skin)
+pe$derm_all<-NA
+pe$derm_all<-paste(pe$skin, pe$derm_textfactors1, pe$derm_textfactors2, sep=" ")
+pe$derm_all <- gsub('NA', '', pe$derm_all) #cleanup NA left by paste
+pe$derm_all <- gsub('  ', ' ', pe$derm_all) #cleanup any double spaces
+pe$derm_all<-tolower(pe$derm_all)
+#pederm_all<-table(pe$derm_all)
+#write.table(pederm_all, file = "temp.csv", sep = ",") #produces table of 154 unique pe strings
+#-------------other
+pe$derm_all <- gsub('other', '', pe$derm_all)
+pe$derm_all <- gsub('normal', '', pe$derm_all)
+pe$derm_all <- gsub('none', '', pe$derm_all)
+pe$derm_all <- gsub('noted', '', pe$derm_all)
+pe$derm_all <- gsub('thereisreddishinflammationalongthenoseprobablyduetorunnynose', '', pe$derm_all)
+pe$derm_all <- gsub('referredtoskinclinicforreview.hypopigmentationaroundthenasalregion', '', pe$derm_all)
+pe$derm_all <- gsub('musclepain', 'p_muskl_jtend', pe$derm_all)
+pe$derm_all <- gsub('palmarpallor', '', pe$derm_all)
+pe$derm_all <- gsub('jaundice', 'p_heme_jaundice', pe$derm_all)
+pe$derm_all <- gsub('boggyswellingofrtfoot', 'p_lymph_edema_LE', pe$derm_all)
+#-------------p_derm_scar
+pe$derm_all <- gsub('burnscaronthelefthand', 'p_derm_scar', pe$derm_all)
+pe$derm_all <- gsub('burnscar', 'p_derm_scar', pe$derm_all)
+pe$derm_all <- gsub('superinfectionoftherashnoted.obviouspreviousscaracrossthebodynoted', 'p_derm_ssti p_derm_scar', pe$derm_all)
+pe$derm_all <- gsub('postinflammatoryskinlesions,postincisionscarontheheadandabdomen', 'p_derm_scar', pe$derm_all)
+pe$derm_all <- gsub('healedscarontheleftknee', 'p_derm_scar', pe$derm_all)
+pe$derm_all <- gsub('keloids-postauricular', 'p_derm_scar', pe$derm_all)
+pe$derm_all <- gsub('keloidsontherightpinnaandleftpinna', 'p_derm_scar', pe$derm_all)
+pe$derm_all <- gsub('healedbruisesonrightelbow', 'p_derm_scar', pe$derm_all)
+#-------------p_derm_hyperpigment
+pe$derm_all <- gsub('hyperpigmentedpostinflammatorylesions', 'p_derm_hyperpigment', pe$derm_all)
+pe$derm_all <- gsub('postinflammatoryskinlesiononthefeet,', 'p_derm_hyperpigment ', pe$derm_all)
+pe$derm_all <- gsub('postinflammatoryskinlesionsalloverthebody', 'p_derm_hyperpigment', pe$derm_all)
+pe$derm_all <- gsub('postinflammatoryskinlesions', 'p_derm_hyperpigment', pe$derm_all)
+pe$derm_all <- gsub('hyperpigmentations', 'p_derm_hyperpigment', pe$derm_all)
+#-------------p_derm_arthropod
+pe$derm_all <- gsub('jiggerlesion', 'p_derm_arthropod', pe$derm_all)
+pe$derm_all <- gsub('healingpostjiggerextractionlesions', 'p_derm_arthropod', pe$derm_all)
+pe$derm_all <- gsub('jigger,lesion', 'p_derm_arthropod', pe$derm_all)
+pe$derm_all <- gsub('popularrashintheabdomenlowerback,groinandforearm.excoriationmarksnotedwithscatteredulcerationsuggestiveofscabies', 'p_derm_arthropod', pe$derm_all)
+pe$derm_all <- gsub('jiggers', 'p_derm_arthropod', pe$derm_all)
+pe$derm_all <- gsub('generalized_rash popularrashintheabdomenlowerback,groinandforearm.excoriationmarkswithscatteredulcerationsuggestiveofscabies', 'p_derm_arthropod', pe$derm_all)
+pe$derm_all <- gsub('generalized_rash pruriticrashsuggestiveofscabies', 'p_derm_arthropod', pe$derm_all)
+#-------------p_derm_ssti
+pe$derm_all <- gsub('postabscessofleftthumbnail', 'p_derm_ssti', pe$derm_all)
+pe$derm_all <- gsub('postparonychiawithincisionanddrainagereportedlydone3daysago', '', pe$derm_all)
+pe$derm_all <- gsub('boilonthertouterglutealmuscle', 'p_derm_ssti', pe$derm_all)
+pe$derm_all <- gsub('furuncleontheleftsideofthescalp', 'p_derm_ssti', pe$derm_all)
+pe$derm_all <- gsub('withsuperimposedbacterialskininfection', 'p_derm_ssti', pe$derm_all)
+pe$derm_all <- gsub('fungalandbacterial', 'p_derm_tnea p_derm_ssti', pe$derm_all)
+pe$derm_all <- gsub('bacterialskininfection', 'p_derm_ssti', pe$derm_all)
+pe$derm_all <- gsub('furunculosis', 'p_derm_ssti', pe$derm_all)
+pe$derm_all <- gsub('furuncles', 'p_derm_ssti', pe$derm_all)
+pe$derm_all <- gsub('furuncle', 'p_derm_ssti', pe$derm_all)
+pe$derm_all <- gsub('abscesses', 'p_derm_ssti', pe$derm_all)
+pe$derm_all <- gsub('allergicskininfection', 'p_derm_ssti', pe$derm_all)
+pe$derm_all <- gsub('p_derm_tneaskininfection', 'p_derm_tnea p_derm_ssti', pe$derm_all)
+pe$derm_all <- gsub('superinfectionoftherash.obviouspreviousscaracrossthebody', 'p_derm_ssti', pe$derm_all)
+pe$derm_all <- gsub('soreontherightsmalltoe', 'p_derm_ssti', pe$derm_all)
+pe$derm_all <- gsub('wetskinsores', 'p_derm_ssti', pe$derm_all)
+pe$derm_all <- gsub('abscessontherightgluteaus', 'p_derm_ssti', pe$derm_all)
+#-------------p_derm_trauma
+pe$derm_all <- gsub('bruises butsecondarytoafallortrauma', 'p_derm_trauma', pe$derm_all)
+pe$derm_all <- gsub('bruises ontheupperlipduetofall', 'p_derm_trauma', pe$derm_all)
+pe$derm_all <- gsub('bruises woundsonthelowerlimbsnbilaterallyduetofallswhileplaying', 'p_derm_trauma', pe$derm_all)
+pe$derm_all <- gsub('righthandburnduetohottea', 'p_derm_trauma', pe$derm_all)
+pe$derm_all <- gsub('burnontherightfoot1cmdiametersuperficialburn', 'p_derm_trauma', pe$derm_all)
+#-------------p_derm_tnea
+pe$derm_all <- gsub('localized_rash crustingrasharoundtheneckwithclearmarginsuggestiveoftimescoporis', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('localized_rash fungalinfection', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('localized_rash fungalringworminfection', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('localized_rash fungalskininfectionp_derm_ssti', 'p_derm_tnea p_derm_ssti', pe$derm_all)
+pe$derm_all <- gsub('localized_rash fungalskininfection', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('localized_rash fungal', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('localized_rash macular fungalskininfection', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('localized_rash nummullaerashwithraisedanddistinctmarginsuggestiveoftineaontheforehead', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('localized_rash rashontheforeheadthatswelldemarcatedmarginsslightlyraisedwithcrustedsurfacesuggestiveoftimescapitis', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('localized_rash papular fungalinfection', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('localized_rash ringworm', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('maculopapular fungal', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('fungalinfectionontheforehead', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('ringwormonthescalp', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('tineacapitis', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('ringwormsonthescalp,', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('ringwormsonthescalp', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('scalyskinpatchonthescalp', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('timescapitis', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('tineapedis', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('fungalskininfection', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('localized_rash localfungalinfection', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('ringworms', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('ringworm', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('tinea', 'p_derm_tnea', pe$derm_all)
+#-------------p_derm_bruising
+pe$derm_all <- gsub('bruises ontheleftleg', 'p_derm_bruising', pe$derm_all)
+pe$derm_all <- gsub('bruises ontheupperandlowerlipsurface', 'p_derm_bruising', pe$derm_all)
+pe$derm_all <- gsub("bruises ulcer'sontheleftbigtoe", 'p_derm_bruising', pe$derm_all)
+pe$derm_all <- gsub('bruises macular', 'p_derm_bruising', pe$derm_all)
+pe$derm_all <- gsub('bruises', 'p_derm_bruising', pe$derm_all)
+#-------------p_derm_petech
+pe$derm_all <- gsub('generalized_rash petechiae', 'p_derm_petech', pe$derm_all)
+pe$derm_all <- gsub('generalized_rash septicspots', 'p_derm_petech', pe$derm_all)
+pe$derm_all <- gsub('localized_rash petechiae aroundthefacenasalridge', 'p_derm_petech', pe$derm_all)
+pe$derm_all <- gsub('localized_rash petechiae', 'p_derm_petech', pe$derm_all)
+pe$derm_all <- gsub('petechiae maculopapular', 'p_derm_petech', pe$derm_all)
+pe$derm_all <- gsub('petechiae onthertlegandface', 'p_derm_petech', pe$derm_all)
+pe$derm_all <- gsub('petechiae abscessontherightgluteaus', 'p_derm_petech p_derm_ssti', pe$derm_all)
+pe$derm_all <- gsub('petechiae', 'p_derm_petech', pe$derm_all)
+#-------------p_derm_other
+pe$derm_all <- gsub('chickenpox', 'p_derm_other', pe$derm_all)
+pe$derm_all <- gsub('rash linearrashthatstartedattheinterspaceofthehalussuggestiveofcutaneouslarvaenigrans', 'p_derm_other', pe$derm_all)
+pe$derm_all <- gsub('hypopigmentedpatchesontheface', 'p_derm_other', pe$derm_all)
+pe$derm_all <- gsub('pimplesontheface', 'p_derm_other', pe$derm_all)
+pe$derm_all <- gsub('localized_rash atopicdermatitis', 'p_derm_other', pe$derm_all)
+pe$derm_all <- gsub('localized_rash pruiticrashintheforearmsbilaterraly', 'p_derm_other', pe$derm_all)
+#-------------p_derm_rash
+pe$derm_all <- gsub('heatrash', 'p_derm_rash', pe$derm_all)
+pe$derm_all <- gsub('localized_rash', 'p_derm_rash', pe$derm_all)
+pe$derm_all <- gsub('generalized_rash', 'p_derm_rash', pe$derm_all)
+pe$derm_all <- gsub('multipleskinrashes', 'p_derm_rash', pe$derm_all)
+pe$derm_all <- gsub('p_derm_rash mottled', 'p_derm_rash', pe$derm_all)
+pe$derm_all <- gsub('mottled', 'p_derm_rash', pe$derm_all)
+#-------------p_derm_vesicles
+pe$derm_all <- gsub('skinblister', 'p_derm_vesicles', pe$derm_all)
+pe$derm_all <- gsub('p_derm_rash wateryvesicularanditchy', 'p_derm_vesicles', pe$derm_all)
+pe$derm_all <- gsub('p_derm_rash vesicular', 'p_derm_vesicles', pe$derm_all)
+#-------------remove descriptors
+pe$derm_all <- gsub('onbothupperlimbs', '', pe$derm_all)
+pe$derm_all <- gsub('allergicrash', '', pe$derm_all)
+pe$derm_all <- gsub('aroundtheneckandback', '', pe$derm_all)
+pe$derm_all <- gsub('buthealed', '', pe$derm_all)
+pe$derm_all <- gsub('onthescalp', '', pe$derm_all)
+pe$derm_all <- gsub('affectingtheback', '', pe$derm_all)
+pe$derm_all <- gsub('affectingtheface', '', pe$derm_all)
+pe$derm_all <- gsub('affectingthelegs', '', pe$derm_all)
+pe$derm_all <- gsub('alongtheneck', '', pe$derm_all)
+pe$derm_all <- gsub('facialregion', '', pe$derm_all)
+pe$derm_all <- gsub('posthealedallergicskinmarks', '', pe$derm_all)
+pe$derm_all <- gsub('involvingtheheadregionandneck', '', pe$derm_all)
+pe$derm_all <- gsub('ontheface', '', pe$derm_all)
+pe$derm_all <- gsub('onthescalp', '', pe$derm_all)
+pe$derm_all <- gsub('nearthemouth', '', pe$derm_all)
+pe$derm_all <- gsub('alongtheneckregion', '', pe$derm_all)
+pe$derm_all <- gsub('onthearms,skincoloured', '', pe$derm_all)
+pe$derm_all <- gsub('underthearmpits', '', pe$derm_all)
+pe$derm_all <- gsub('onthelegs', '', pe$derm_all)
+pe$derm_all <- gsub('postrashes', '', pe$derm_all)
+pe$derm_all <- gsub('noproblem', '', pe$derm_all)
+pe$derm_all <- gsub('region', '', pe$derm_all)
+#-------------p_derm_macpap
+pe$derm_all <- gsub('maculopapular', 'p_derm_macpap', pe$derm_all)
+pe$derm_all <- gsub('p_derm_rash p_derm_rash papular hasapapularrashontheforehead', 'p_derm_macpap', pe$derm_all)
+pe$derm_all <- gsub('p_derm_rash papular papularrashlocalizedontheneckwithevidenceexcoriationmarks.', 'p_derm_macpap', pe$derm_all)
+pe$derm_all <- gsub('p_derm_rash aroundtherighteye.nonitchy.papular', 'p_derm_macpap', pe$derm_all)
+pe$derm_all <- gsub('p_derm_rash finepapularrasharoundthetorso..', 'p_derm_macpap', pe$derm_all)
+pe$derm_all <- gsub('p_derm_rash popularitchyrashassociatedwithrecentmeatallergy', 'p_derm_macpap', pe$derm_all) 
+pe$derm_all <- gsub('skinrashmacular', 'p_derm_macpap', pe$derm_all)
+pe$derm_all <- gsub('macular', 'p_derm_macpap', pe$derm_all)
+pe$derm_all <- gsub('papular', 'p_derm_macpap', pe$derm_all)
+pe$derm_all <- gsub('p_derm_rash p_derm_macpap', 'p_derm_macpap', pe$derm_all)
+#-------------Cleanup
+pe$derm_all <- gsub('rashes no rashes', 'p_derm_rash', pe$derm_all)
+pe$derm_all <- gsub('p_derm_rash rash.', 'p_derm_rash', pe$derm_all)
+pe$derm_all <- gsub('p_derm_rash p_derm_tneaskininfection', 'p_derm_tnea', pe$derm_all)
+pe$derm_all <- gsub('p_derm_rash posthealedallergicskinmarks', 'p_derm_rash', pe$derm_all)
+pe$derm_all <- gsub('no', '', pe$derm_all)
+#-------------interim check to see if there are other reassignments needed
+#pederm_all<-table(pe$derm_all)
+#write.table(pederm_all, file = "temp.csv", sep = ",")
+temppe<-pe$derm_all
+temppe<-as.data.frame(temppe)
+temppelev <- levels(factor(temppe$temppe))
+temppelev <- unique(unlist(strsplit(temppelev, " ")))
+tempresult <- matrix(data = "0", nrow = length(temppe$temppe), ncol = length(temppelev)) #matrix with individual symptoms as columns
+char.temppe <- as.character(temppe$temppe) #required for grep
+for (i in 1:length(temppelev)) {
+  tempresult[grep(temppelev[i], char.temppe, fixed = TRUE), i] <- "1"
+}
+tempresult <- data.frame(tempresult, stringsAsFactors = TRUE)
+colnames(tempresult) <- temppelev
+temppe <- cbind(temppe,tempresult)
+ls(temppe) #15 total
+#interim backup
+peback<-pe
+```
+#Combine all pe variables into 1
+```{r}
+#----------------------Combine all pe variables into 1
+pe$pe_all<-NA
+pe$pe_all<-paste(pe$neuro_all, pe$heent_all, pe$chest_all, pe$card_all, pe$abd_all, pe$joints_abnl_only, pe$nodes_all, pe$derm_all, sep=" ")
+ls(pe)
+
+temppe<-pe$pe_all
+temppe<-as.data.frame(temppe)
+temppelev <- levels(factor(temppe$temppe))
+temppelev <- unique(unlist(strsplit(temppelev, " ")))
+tempresult <- matrix(data = "0", nrow = length(temppe$temppe), ncol = length(temppelev)) #matrix with individual symptoms as columns
+char.temppe <- as.character(temppe$temppe) #required for grep
+for (i in 1:length(temppelev)) {
+  tempresult[grep(temppelev[i], char.temppe, fixed = TRUE), i] <- "1"
+}
+tempresult <- data.frame(tempresult, stringsAsFactors = TRUE)
+colnames(tempresult) <- temppelev
+temppe <- cbind(temppe,tempresult)
+ls(temppe) #75 total
+```
+#Temp save
+```{r}
+save(pe, file=paste(Sys.Date(),"pe_subset.rda", sep="_"))
+load("2020-09-30_pe_subset.rda")
+```
+#Create combined symptoms and pe "all_clinvars"
+```{r}
+pe$all_clinvars<-paste(pe$all_symptoms, pe$pe_all, sep=" ")
+#trim to remove working sets of pe variables
+pe_trimmed<-pe[c("person_id", "redcap_event_name", "all_symptoms", "pe_all", "all_clinvars")]
+#-------------interim check to see if other cleaning needed
+temppe<-pe_trimmed$all_clinvars
+temppe<-as.data.frame(temppe)
+temppelev <- levels(factor(temppe$temppe))
+temppelev <- unique(unlist(strsplit(temppelev, " ")))
+tempresult <- matrix(data = "0", nrow = length(temppe$temppe), ncol = length(temppelev)) #matrix with individual symptoms as columns
+char.temppe <- as.character(temppe$temppe) #required for grep
+for (i in 1:length(temppelev)) {
+  tempresult[grep(temppelev[i], char.temppe, fixed = TRUE), i] <- "1"
+}
+tempresult <- data.frame(tempresult, stringsAsFactors = TRUE)
+colnames(tempresult) <- temppelev
+temppe <- cbind(temppe,tempresult)
+ls(temppe) #129 total
+save(pe_trimmed, file=paste(Sys.Date(),"pe_trimmed.rda", sep="_"))
+load("2020-09-30_pe_trimmed.rda")
+```
+#Merge pe_all and all_clinvars back to main database
+```{r}
+AIC_clinclean<-merge(AIC_sym, pe_trimmed, by=c("person_id","redcap_event_name", "all_symptoms"))
+
+save(AIC_clinclean, file=paste(Sys.Date(),"AIC_clincleaned.rda", sep="_"))
+load("2020-06-12_AIC_clincleaned.rda")
+```
+
+#Create dummy variables
+```{r}
+lev <- levels(factor(AIC_clinclean$all_clinvars)) 
+lev <- unique(unlist(strsplit(lev, " ")))#131 levels
+result <- matrix(data = "0", nrow = length(AIC_clinclean$all_clinvars), ncol = length(lev)) #matrix with individual symptoms as columns
+char.aic_symptom <- as.character(AIC_clinclean$all_clinvars) #required for grep
+for (i in 1:length(lev)) {
+  result[grep(lev[i], char.aic_symptom, fixed = TRUE), i] <- "1"
+}
+result <- data.frame(result, stringsAsFactors = TRUE)
+colnames(result) <- lev
+#colnames(result) <- mnames
+AIC_clinclean <- cbind(AIC_clinclean,result)
+View(AIC_clinclean[c(1604, 1605, 1639)])
+#column 1604 "Var.1604", column 1605 "NA", and column 1639 "."
+#drop columns 1604 and 1605 and 1639
+AIC_clinclean<-AIC_clinclean[-c(1604, 1605, 1639)]
+save(AIC_clinclean, file=paste(Sys.Date(),"clinvarcoded.rda", sep="_"))
+```
+
+#
+```{r}
+#Load data set with cleaned symptoms and physical exam variables
+load("C:/Users/david/Documents/Work/GitHub/DENV_malaria_coinfection_MS/2020-09-29_clinvarcoded.rda")
+df<-AIC_clinclean
+```
+#Create dob variable to clean date of birth
+```{r}
+library(tidyr)
+grep("date", names(df), value=TRUE)
+#Returned 46 variables with "date" in them. 
+#Variables that may be relevant to dob: "u24_date_of_birth" - all NA, "date_of_birth_aic", "date_of_birth"
+table(df$u24_date_of_birth, exclude = NULL) #empty
+#Variables that may be relevant to visit date: "date_collected_rdt_denv_kenya" - all NA, "date_collected_rdt_malaria_kenya" - all NA,    "date_collected_other_kenya" - all NA, "interview_date_aic", "interview_date", "u24_interview_date"  - all NA, "pedsql_date_parent", "pedsql_date", "date_collected_microscopy_malaria_kenya",  "dem_interviewdate" - all NA,"visit_date" - all NA, "date_collected"
+#other dates of interest: "date_symptom_onset"
+table(df$date_symptom_onset, exclude = NULL) #days of symptoms, not date
+dfdates<-df[c("person_id", "redcap_event_name", "date_of_birth_aic", "date_of_birth", "interview_date_aic", "interview_date", "pedsql_date_parent", "pedsql_date", "date_collected_microscopy_malaria_kenya",  "date_collected")]
+
+#------------clean birthdate, creating "dob" variable
+#explore data
+length(dfdates$date_of_birth_aic[!is.na(dfdates$date_of_birth_aic)]) #14415 entries excluding NA
+length(unique(dfdates$date_of_birth_aic[!is.na(dfdates$date_of_birth_aic)])) #3341 uniqe
+length(dfdates$date_of_birth[!is.na(dfdates$date_of_birth)]) #202 entries, excluding NA; Manually checked, "date_of_birth" doesn't add more info to "date_of_birth_aic"
+#Do all vA have date_of_birth_aic?
+sum(is.na(dfdates$date_of_birth_aic[dfdates$redcap_event_name=="visit_a_arm_1"])) #352 missing
+
+#Subjects assigned person_id but not enrolled do not have patient_info
+#Subset on subjects with patient_info
+enrolledIDs<-dfdates$person_id[dfdates$redcap_event_name=="patient_informatio_arm_1"] #7545 enrolled
+enrolled<-dfdates[dfdates$person_id %in% enrolledIDs,]
+length(unique(enrolled$person_id[is.na(enrolled$date_of_birth_aic)&enrolled$redcap_event_name=="visit_a_arm_1"])) #only 10 missing date_of_birth_aic from visit A
+missinglist<-unique(enrolled$person_id[is.na(enrolled$date_of_birth_aic)&enrolled$redcap_event_name=="visit_a_arm_1"]) 
+missingdf<-enrolled[enrolled$person_id %in% missinglist,]
+#No dob data: CF0023, CF0026, RF0117, RF0253, RF0948, RF0950
+#dob data from other visits: MF2317, MF2318, MF 2360, RF0325
+#No data under date_of_birth for those missing date_of_birth_aic
+
+#for those with both "date_of_birth_aic" and "date_of_birth", identify those that do not match
+unmatched<-enrolled[!is.na(enrolled$date_of_birth_aic)&!is.na(enrolled$date_of_birth)&(enrolled$date_of_birth_aic!=enrolled$date_of_birth),] #17 values where date_of_birth and date_of_birth_aic do not match
+#For those person_id look at other visits
+unmatchedallvisits<-enrolled[enrolled$person_id %in% as.list(unmatched$person_id),] #in all 17 mismatches, additional data from follow up visits indicate that "date_of_birth_aic" is most consistent
+
+#Create dob variable. Minimize variables when reshaping
+#Create shorter replacement for redcap_event_name
+df$redcap<-NA
+df$redcap[df$redcap_event_name=="patient_informatio_arm_1"]<-"info"
+df$redcap[df$redcap_event_name=="visit_a_arm_1"]<-"a"
+df$redcap[df$redcap_event_name=="visit_b_arm_1"]<-"b"
+df$redcap[df$redcap_event_name=="visit_c_arm_1"]<-"c"
+df$redcap[df$redcap_event_name=="visit_d_arm_1"]<-"d"
+df$redcap[df$redcap_event_name=="visit_e_arm_1"]<-"e"
+df$redcap[df$redcap_event_name=="visit_f_arm_1"]<-"f"
+df$redcap[df$redcap_event_name=="visit_g_arm_1"]<-"g"
+df$redcap[df$redcap_event_name=="visit_h_arm_1"]<-"h"
+df$redcap[df$redcap_event_name=="visit_i_arm_1"]<-"i"
+df$redcap[df$redcap_event_name=="visit_j_arm_1"]<-"j"
+table(df$redcap_event_name, df$redcap, exclude = NULL)
+
+dfdob<-df[c("person_id", "redcap", "date_of_birth_aic")]
+#reshape long to wide
+dfdob_wide<-reshape(dfdob, 
+                      timevar = "redcap",
+                     idvar = "person_id",
+                     direction = "wide")
+sum(is.na(dfdob_wide$date_of_birth_aic.a))
+#Create dob variable which will be date_of_birth_aic from visit A if available
+dfdob_wide$dob<-dfdob_wide$date_of_birth_aic.a#Many without dob have date from visit b
+table(dfdob_wide$dob[is.na(dfdob_wide$dob)], exclude = NULL)#419 missing
+dfdob_wide$dob[is.na(dfdob_wide$dob)]<-dfdob_wide$date_of_birth_aic.b[is.na(dfdob_wide$dob)]#fill in missing dob with visit b info
+table(dfdob_wide$dob[is.na(dfdob_wide$dob)], exclude = NULL)#352 missing
+#look at those still missing dob
+missingdobID<-dfdob_wide$person_id[is.na(dfdob_wide$dob)] #list of person_ID missing dob
+missingdob<-dfdob_wide[dfdob_wide$person_id %in% missingdobID,] #only two dob can be filled in with other visit data
+dfdob_wide$dob[is.na(dfdob_wide$dob)]<-dfdob_wide$date_of_birth_aic.c[is.na(dfdob_wide$dob)]#fill in missing dob with visit c info #filled in 1
+table(dfdob_wide$dob[is.na(dfdob_wide$dob)], exclude = NULL)#351 missing
+dfdob_wide$dob[is.na(dfdob_wide$dob)]<-dfdob_wide$date_of_birth_aic.d[is.na(dfdob_wide$dob)]#fill in missing dob with visit d info #filled in 0
+table(dfdob_wide$dob[is.na(dfdob_wide$dob)], exclude = NULL)#351 missing
+dfdob_wide$dob[is.na(dfdob_wide$dob)]<-dfdob_wide$date_of_birth_aic.e[is.na(dfdob_wide$dob)]#fill in missing dob with visit e info #filled in 0
+table(dfdob_wide$dob[is.na(dfdob_wide$dob)], exclude = NULL)#351 missing
+dfdob_wide$dob[is.na(dfdob_wide$dob)]<-dfdob_wide$date_of_birth_aic.f[is.na(dfdob_wide$dob)]#fill in missing dob with visit f info #filled in 0
+table(dfdob_wide$dob[is.na(dfdob_wide$dob)], exclude = NULL)#351 missing
+dfdob_wide$dob[is.na(dfdob_wide$dob)]<-dfdob_wide$date_of_birth_aic.g[is.na(dfdob_wide$dob)]#fill in missing dob with visit g info #filled in 1
+table(dfdob_wide$dob[is.na(dfdob_wide$dob)], exclude = NULL)#350 missing
+dfdob_wide$dob[is.na(dfdob_wide$dob)]<-dfdob_wide$date_of_birth_aic.h[is.na(dfdob_wide$dob)]#fill in missing dob with visit h info #filled in 0
+table(dfdob_wide$dob[is.na(dfdob_wide$dob)], exclude = NULL)#350 missing
+dfdob_wide$dob[is.na(dfdob_wide$dob)]<-dfdob_wide$date_of_birth_aic.i[is.na(dfdob_wide$dob)]#fill in missing dob with visit i info #filled in 0
+table(dfdob_wide$dob[is.na(dfdob_wide$dob)], exclude = NULL)#350 missing
+dfdob_wide$dob[is.na(dfdob_wide$dob)]<-dfdob_wide$date_of_birth_aic.j[is.na(dfdob_wide$dob)]#fill in missing dob with visit j info #filled in 0
+table(dfdob_wide$dob[is.na(dfdob_wide$dob)], exclude = NULL)#350 missing
+head(dfdob_wide$dob)
+#reshape wide to long
+dfdob_long<-reshape(dfdob_wide,
+                    varying = c(2:12),
+                    v.names = "date_of_birth_aic",
+                    timevar = "redcap",
+                    times = c("info", "a", "b","c", "d","e", "f", "g", "h", "i","j"),
+                     direction = "long")
+dfdob_long<-dfdob_long[order(dfdob_long$person_id),]#sort by person_id
+dfdob_long<-dfdob_long[-c(5)]#removed ID variable created by R
+dfmerge<- merge(df, dfdob_long,  by=c("person_id", "redcap", "date_of_birth_aic"), all = FALSE, sort = TRUE)
+library(lubridate)
+dfmerge$dob<-as.Date(dfmerge$dob)#define as a date
+attributes(dfmerge$dob)
+save(dfmerge, file=paste(Sys.Date(),"dob_clean.rda", sep="_"))
+load("C:/Users/david/Documents/Work/GitHub/DENV_malaria_coinfection_MS/2020-09-29_dob_clean.rda")
+```
+
+#Clean visit dates
+```{r}
+#relevant variables: dfdates<-dfmerge[c("person_id", "redcap", "dob", "interview_date_aic", "interview_date", "pedsql_date_parent", "pedsql_date", "date_collected_microscopy_malaria_kenya",  "date_collected")]
+#explore data; looks like "interview_date_aic" has most data
+#many interview_date_aic entries are "1900-01-01"
+#explored REDCap databased online, looks like visits with "1900-01-01" only have that as a data element under the instrument "Aic Merged", without any other information associated with that visit. This may have been unintentionally created during upload of data from earlier in the study prior to REDCap.
+#create "vdate" variable using interview_date_aic as first source
+dfmerge$vdate<-dfmerge$interview_date_aic
+#need to remove all dates that are "1900-01-01"
+dfmerge$vdate[dfmerge$vdate=="1900-01-01"] <- NA
+#"interview_date" variable can fill in some missing
+dfmerge$vdate[is.na(dfmerge$vdate)]<-dfmerge$interview_date[is.na(dfmerge$vdate)]
+table(dfmerge$vdate[is.na(dfmerge$vdate)], exclude = NULL)
+#use pedsql_date
+dfmerge$vdate[is.na(dfmerge$vdate)]<-dfmerge$pedsql_date_parent[is.na(dfmerge$vdate)]
+table(dfmerge$vdate[is.na(dfmerge$vdate)], exclude = NULL)
+dfmerge$vdate[is.na(dfmerge$vdate)]<-dfmerge$pedsql_date[is.na(dfmerge$vdate)]
+table(dfmerge$vdate[is.na(dfmerge$vdate)], exclude = NULL)
+#use "date_collected_microscopy..."
+dfmerge$vdate[is.na(dfmerge$vdate)]<-dfmerge$date_collected_microscopy_malaria_kenya[is.na(dfmerge$vdate)]
+table(dfmerge$vdate[is.na(dfmerge$vdate)], exclude = NULL)
+#use "date_collected"
+dfmerge$vdate[is.na(dfmerge$vdate)]<-dfmerge$date_collected[is.na(dfmerge$vdate)]
+table(dfmerge$vdate[is.na(dfmerge$vdate)], exclude = NULL)
+dfmerge$vdate<-as.Date(dfmerge$vdate)#define as a date
+```
+#age
+```{r}
+dfmerge$age_days<-NA
+dfmerge$age_days<-(dfmerge$vdate-dfmerge$dob)
+attributes(dfmerge$age_days)
+#------------------discovered errors in dates
+#UF1667 and UF0007 have negative ages and there are a large number that have age calculated as 0
+#Subjects with age 0: CF0262, KF0037, KF0166, KF0207, KF0306, KF0451, KF1418, UF0021, UF0696 (these also had ages of 17, 30, 30days at vB)
+#Looked at each subject
+#CF0262 interview_date_aic same as dob: interview_date_aic seems sequential compared with neighboring person_ids; will replace dob with NA
+dfmerge$dob[dfmerge$person_id=="CF0262"]<-NA
+#KF0037 interview_date_aic same as dob: interview_date_aic seems sequential compared with neighboring person_ids; will replace dob with NA
+dfmerge$dob[dfmerge$person_id=="KF0037"]<-NA
+#KF0166 interview_date_aic same as dob and other dates: interview_date_aic seems sequential compared with neighboring person_ids; will replace dob with NA
+dfmerge$dob[dfmerge$person_id=="KF0166"]<-NA
+#KF0207 interview_date_aic same as dob and other dates: interview_date_aic seems sequential compared with neighboring person_ids; will replace dob with NA
+dfmerge$dob[dfmerge$person_id=="KF0207"]<-NA
+#KF0306 interview_date_aic same as dob and other dates: interview_date_aic seems sequential compared with neighboring person_ids; will replace dob with NA
+dfmerge$dob[dfmerge$person_id=="KF0306"]<-NA
+#KF0451 interview_date_aic same as dob and other dates: interview_date_aic seems sequential compared with neighboring person_ids; will replace dob with NA
+dfmerge$dob[dfmerge$person_id=="KF0451"]<-NA
+#KF1418 interview_date_aic same as dob and other dates: interview_date_aic seems sequential compared with neighboring person_ids; will replace dob with NA
+dfmerge$dob[dfmerge$person_id=="KF1418"]<-NA
+#UF0007 interview_date_aic same as dob and other dates for vA: interview_date_aic seems sequential compared with neighboring person_ids and  and vB follows a month later; will replace dob with NA
+dfmerge$dob[dfmerge$person_id=="UF0007"]<-NA
+#UF0021 interview_date_aic same as dob and other dates for vA: interview_date_aic seems sequential compared with neighboring person_ids and  and vB follows a month later; will replace dob with NA
+dfmerge$dob[dfmerge$person_id=="UF0021"]<-NA
+#UF0696 interview_date_aic same as dob and other dates for vA: interview_date_aic seems sequential compared with neighboring person_ids and  and vB follows a month later; will replace dob with NA
+dfmerge$dob[dfmerge$person_id=="UF0696"]<-NA
+#UF1667 has visit b date_of_birth_aic of 2008-01-01, so will assign this as dob
+dfmerge$dob[dfmerge$person_id=="UF1667"]<-"2008-01-01"
+#recalculate age
+dfmerge$age_days<-(dfmerge$vdate-dfmerge$dob)
+#now lowest age is 59 days, which seems too young, but at least the dob and vdate are not identical
+dfmerge$age_years<-NA
+dfmerge$age_years<-(dfmerge$age_days/365)
+
+save(dfmerge, file=paste(Sys.Date(),"dob_age.rda", sep="_"))
+```
+#Next data cleaning file saved as "DENVmal-step2-clean_anthro.Rmd"
